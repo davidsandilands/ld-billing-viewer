@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LaunchDarkly Billing Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <div class="logo">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h1>LD Billing Viewer</h1>
+            </div>
+            <div class="header-actions">
+                <button id="theme-toggle" class="icon-btn" title="Toggle Theme">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                    </svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Configuration Panel -->
+            <section class="config-panel" id="config-panel">
+                <div class="panel-header">
+                    <h2>Configuration</h2>
+                    <button id="toggle-config" class="collapse-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="18 15 12 9 6 15"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="panel-content">
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label for="api-key">API Access Token</label>
+                            <div class="input-with-icon">
+                                <input type="password" id="api-key" placeholder="Enter your LaunchDarkly API token" autocomplete="off">
+                                <button id="toggle-api-key" class="icon-btn small" title="Toggle visibility">
+                                    <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                    <svg class="eye-off-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                                        <line x1="1" y1="1" x2="23" y2="23"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <span class="helper-text">Read-only token recommended. <a href="https://app.launchdarkly.com/settings/authorization" target="_blank">Get token</a></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="date-range">Time Period</label>
+                            <div class="date-range-controls">
+                                <select id="date-preset">
+                                    <option value="7d">Last 7 days</option>
+                                    <option value="14d">Last 14 days</option>
+                                    <option value="30d" selected>Last 30 days</option>
+                                    <option value="60d">Last 60 days</option>
+                                    <option value="90d">Last 90 days</option>
+                                    <option value="180d">Last 180 days</option>
+                                    <option value="365d">Last 365 days</option>
+                                    <option value="custom">Custom range</option>
+                                </select>
+                                <div class="custom-date-inputs" id="custom-dates" style="display: none;">
+                                    <input type="date" id="start-date" placeholder="Start date">
+                                    <span class="date-separator">to</span>
+                                    <input type="date" id="end-date" placeholder="End date">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="sdk-type">SDK Type Filter</label>
+                            <select id="sdk-type">
+                                <option value="all">All SDKs</option>
+                                <option value="client">Client-side only</option>
+                                <option value="server">Server-side only</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group actions">
+                            <button id="fetch-data" class="btn primary">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                                    <polyline points="21 3 21 9 15 9"/>
+                                </svg>
+                                Fetch Usage Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Loading State -->
+            <div id="loading-overlay" class="loading-overlay" style="display: none;">
+                <div class="loading-spinner">
+                    <div class="spinner"></div>
+                    <p>Fetching usage data...</p>
+                </div>
+            </div>
+
+            <!-- Error State -->
+            <div id="error-message" class="error-message" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <p id="error-text">An error occurred</p>
+                <button id="dismiss-error" class="btn secondary">Dismiss</button>
+            </div>
+
+            <!-- Dashboard Section -->
+            <section id="dashboard" class="dashboard" style="display: none;">
+                <!-- Summary Cards -->
+                <div class="summary-cards">
+                    <div class="summary-card cmau">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Client MAU</span>
+                            <span class="card-value" id="total-cmau">--</span>
+                            <span class="card-subtitle" id="cmau-period">Current period</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-card connections">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                                <line x1="8" y1="21" x2="16" y2="21"/>
+                                <line x1="12" y1="17" x2="12" y2="21"/>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Service Connections</span>
+                            <span class="card-value" id="total-connections">--</span>
+                            <span class="card-subtitle" id="connections-period">Peak in period</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-card experiments">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Experimentation Keys</span>
+                            <span class="card-value" id="total-experiments">--</span>
+                            <span class="card-subtitle" id="experiments-period">Current period</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-card projects">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Active Projects</span>
+                            <span class="card-value" id="total-projects">--</span>
+                            <span class="card-subtitle">With usage data</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="charts-section">
+                    <div class="chart-container wide">
+                        <div class="chart-header">
+                            <h3>Client MAU Over Time</h3>
+                            <div class="chart-controls">
+                                <select id="cmau-chart-type">
+                                    <option value="line">Line Chart</option>
+                                    <option value="bar">Bar Chart</option>
+                                    <option value="area">Area Chart</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="cmau-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container wide">
+                        <div class="chart-header">
+                            <h3>Service Connections Over Time</h3>
+                            <div class="chart-controls">
+                                <select id="connections-chart-type">
+                                    <option value="line">Line Chart</option>
+                                    <option value="bar">Bar Chart</option>
+                                    <option value="area">Area Chart</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="connections-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Project Breakdown Section -->
+                <div class="breakdown-section">
+                    <div class="section-header">
+                        <h3>Usage by Project</h3>
+                        <div class="section-controls">
+                            <input type="text" id="project-search" placeholder="Search projects..." class="search-input">
+                            <select id="project-sort">
+                                <option value="mau-desc">MAU (High to Low)</option>
+                                <option value="mau-asc">MAU (Low to High)</option>
+                                <option value="name-asc">Name (A-Z)</option>
+                                <option value="name-desc">Name (Z-A)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="project-grid" id="project-grid">
+                        <!-- Project cards will be dynamically inserted here -->
+                    </div>
+                </div>
+
+                <!-- Data Table Section -->
+                <div class="table-section">
+                    <div class="section-header">
+                        <h3>Detailed Usage Data</h3>
+                        <div class="section-controls">
+                            <button id="export-csv" class="btn secondary small">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Export CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="data-table" id="usage-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Project</th>
+                                    <th>Environment</th>
+                                    <th>SDK Type</th>
+                                    <th>MAU</th>
+                                    <th>Connections</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-table-body">
+                                <!-- Data rows will be dynamically inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Empty State -->
+            <section id="empty-state" class="empty-state">
+                <div class="empty-state-content">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M3 3v18h18"/>
+                        <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>
+                    </svg>
+                    <h2>Welcome to LD Billing Viewer</h2>
+                    <p>Enter your LaunchDarkly API token and click "Fetch Usage Data" to view your billing metrics with customizable dashboards.</p>
+                    <div class="feature-list">
+                        <div class="feature">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            <span>View Client MAU and Service Connections</span>
+                        </div>
+                        <div class="feature">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            <span>Customize time frames easily</span>
+                        </div>
+                        <div class="feature">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            <span>Break down usage by project</span>
+                        </div>
+                        <div class="feature">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            <span>Export data to CSV</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>LaunchDarkly Billing Viewer &mdash; A <a href="https://github.com/launchdarkly-labs" target="_blank">LaunchDarkly Labs</a> project</p>
+            <p class="disclaimer">This tool connects directly to the LaunchDarkly API. Your API token is never stored or transmitted to third parties.</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
