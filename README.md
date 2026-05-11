@@ -17,6 +17,7 @@ The LaunchDarkly Billing Viewer provides a better user experience for analyzing 
 - 📈 **Summary Dashboard** - At-a-glance metrics for total MAU, connections, experimentation keys, and projects
 - 🎯 **Project Breakdown** - Filter, search, and sort projects by usage
 - 📅 **Flexible Time Ranges** - Easy date selection with presets and custom ranges
+- 🧩 **Context Filters** - Limit Client-side MAU to specific context kinds and choose the aggregation window (rolling 30-day, MTD, or daily incremental)
 - 🌙 **Dark/Light Theme** - Toggle between themes for comfortable viewing
 - 📥 **CSV Export** - Download detailed usage data for reporting
 - 🔒 **Secure** - API tokens are never stored; all requests are made directly from your browser
@@ -43,7 +44,11 @@ The LaunchDarkly Billing Viewer provides a better user experience for analyzing 
    - Choose a preset (Last 7/14/30/60/90/180/365 days) or
    - Select "Custom range" and pick specific dates
 
-4. **Fetch Data**
+4. **(Optional) Choose Context & Aggregation**
+   - Enter one or more context kinds (for example `user`, `device`) to scope the Client-side MAU metric
+   - Pick an aggregation window (rolling 30 day, month-to-date, or daily incremental) to match LaunchDarkly’s billing view
+
+5. **Fetch Data**
    - Click "Fetch Usage Data" to load your metrics
    - View the interactive dashboard with charts and project breakdown
 
@@ -96,8 +101,8 @@ Deploy to any static hosting service:
 
 ## Understanding the Metrics
 
-### Client MAU (Monthly Active Users)
-The number of unique client-side users who have received feature flag evaluations during the selected period. This is a key billing metric for LaunchDarkly.
+### Client-side MAU (Monthly Active Users)
+The dashboard calls LaunchDarkly’s `/api/v2/usage/clientside-mau` beta endpoint to report the unique client-side contexts seen during the selected window. You can scope this metric with context kinds (for example, `user` vs `device`) and pick the aggregation window that matches LaunchDarkly’s billing UI.
 
 ### Service Connections
 The peak number of concurrent connections from your SDKs to LaunchDarkly. This includes:
@@ -133,7 +138,7 @@ Detailed tabular view of all usage data with:
 - Date
 - Project name
 - Environment
-- SDK type
+- Metric
 - MAU count
 - Connection count
 
@@ -153,6 +158,7 @@ Download all usage data as a CSV file for external analysis or reporting.
 - Some metrics may require specific LaunchDarkly features to be enabled
 - Large date ranges may take longer to load due to API pagination
 - CORS must be enabled for browser access (LaunchDarkly's API supports this)
+- Client-side MAU data comes from LaunchDarkly’s beta `/usage/clientside-mau` endpoint. If that endpoint is unavailable for your account we automatically fall back to the legacy `/usage/mau` API, which only reports user-based MAU counts.
 
 ## Troubleshooting
 

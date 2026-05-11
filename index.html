@@ -25,7 +25,14 @@
                 </div>
                 <h1>LD Billing Viewer</h1>
             </div>
-            <div class="header-actions">
+            <div class="header-actions header-view-modes">
+                <div class="view-mode-toggle" role="tablist" aria-label="Chargeback and capacity views">
+                    <button type="button" class="view-mode-btn active" data-view-mode="overview" role="tab" aria-selected="true">Overview</button>
+                    <button type="button" class="view-mode-btn" data-view-mode="cmau" role="tab" aria-selected="false">cMAU</button>
+                    <button type="button" class="view-mode-btn" data-view-mode="connections" role="tab" aria-selected="false">Connections</button>
+                    <button type="button" class="view-mode-btn" data-view-mode="capacity" role="tab" aria-selected="false">Capacity</button>
+                    <button type="button" class="view-mode-btn" data-view-mode="trends" role="tab" aria-selected="false">Trends</button>
+                </div>
                 <button id="theme-toggle" class="icon-btn" title="Toggle Theme">
                     <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="5"/>
@@ -37,6 +44,14 @@
                 </button>
             </div>
         </header>
+
+        <div id="view-mode-status" class="view-mode-status" aria-live="polite">
+            <div class="view-mode-status-inner">
+                <span class="view-mode-pill" id="view-mode-status-pill">Overview</span>
+                <span id="view-mode-status-desc">Org snapshot and chargeback checklist.</span>
+                <span id="view-mode-status-hint" class="view-mode-status-hint"></span>
+            </div>
+        </div>
 
         <!-- Main Content -->
         <main class="main-content">
@@ -92,12 +107,38 @@
                         </div>
 
                         <div class="form-group">
-                            <label for="sdk-type">SDK Type Filter</label>
-                            <select id="sdk-type">
-                                <option value="all">All SDKs</option>
-                                <option value="client">Client-side only</option>
-                                <option value="server">Server-side only</option>
+                            <label for="context-kind">Context Kind (optional)</label>
+                            <input type="text" id="context-kind" placeholder="e.g. user, device" autocomplete="off">
+                            <span class="helper-text">Comma separate to filter multiple context kinds. Leave blank to include all.</span>
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="chargeback-use-context-filters">
+                                <span>Apply context-kind filters to Chargeback tables (off = raw org totals; recommended for proportional chargeback)</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="aggregation-type">Aggregation Window</label>
+                            <select id="aggregation-type">
+                                <option value="rolling_30d" selected>Rolling 30 day</option>
+                                <option value="month_to_date">Month to date</option>
+                                <option value="daily_incremental">Daily incremental</option>
                             </select>
+                            <span class="helper-text">Client-side MAU API maps daily incremental → incremental.</span>
+                        </div>
+
+                        <div class="form-group capacity-config" id="capacity-config-group">
+                            <label>Capacity thresholds (optional)</label>
+                            <div class="capacity-inputs">
+                                <div class="capacity-field">
+                                    <span class="mini-label">Contracted cMAU</span>
+                                    <input type="number" id="capacity-cmau-limit" min="0" step="1" placeholder="e.g. 5000000" autocomplete="off">
+                                </div>
+                                <div class="capacity-field">
+                                    <span class="mini-label">Peak service connections</span>
+                                    <input type="number" id="capacity-conn-limit" min="0" step="1" placeholder="e.g. 50000" autocomplete="off">
+                                </div>
+                            </div>
+                            <span class="helper-text">Used in Capacity view for utilization vs 70% / 90% guides. Not sent to LaunchDarkly.</span>
                         </div>
 
                         <div class="form-group actions">
@@ -193,8 +234,192 @@
                     </div>
                 </div>
 
+                <!-- Panel: Overview (org snapshot — aligns with chargebackspec.md workflow) -->
+                <div id="panel-overview" class="dashboard-panel is-active">
+                    <div class="spec-overview-card">
+                        <h3>Work at the right level</h3>
+                        <p class="section-sub">This tool mirrors two billable dimensions: <strong>cMAU</strong> (attribute by <strong>application</strong> via <code>application.id</code>) and <strong>service connections</strong> (attribute by <strong>project / environment</strong>). Raw project totals alone are not enough for chargeback — use the tabs for attribution tables and allocation.</p>
+                        <ul class="spec-checklist">
+                            <li><strong>cMAU</strong> — Registered apps, per-application cMAU share, environment gap report, MAU by SDK type</li>
+                            <li><strong>Connections</strong> — Stream mix (server / browser / mobile) and each project&rsquo;s share of org connection peaks</li>
+                            <li><strong>Capacity</strong> — Utilization vs optional contracted ceilings (70% / 90% guides)</li>
+                            <li><strong>Trends</strong> — Time series, project cards, and CSV export for analysis</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Panel: cMAU & application attribution -->
+                <div id="panel-cmau" class="dashboard-panel" style="display: none;">
+                <!-- Applications registry: from GET /applications -->
+                <div id="applications-registry-section" class="applications-registry">
+                    <div class="section-header">
+                        <div>
+                            <h3>Registered applications</h3>
+                            <p class="section-sub">From <code>GET /api/v2/applications</code>. SDKs must send <code>application.id</code> at init for an app to appear and for cMAU attribution.</p>
+                        </div>
+                        <span class="badge-count" id="applications-count-badge" style="display:none;"></span>
+                    </div>
+                    <div id="applications-fetch-error" class="inline-banner warn" style="display: none;" role="alert"></div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense" id="applications-registry-table">
+                            <thead>
+                                <tr>
+                                    <th>Key</th>
+                                    <th>Name</th>
+                                    <th>Kind</th>
+                                    <th>Auto-added</th>
+                                </tr>
+                            </thead>
+                            <tbody id="applications-registry-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="applications-registry-empty" class="helper-inline muted" style="display:none;">No applications returned. If an error appears above, fix token permissions or API access. Otherwise no apps have been registered yet in LaunchDarkly.</p>
+                </div>
+
+                <!-- Chargeback: cMAU by application -->
+                <div id="chargeback-apps-section" class="chargeback-section">
+                    <div class="section-header">
+                        <div>
+                            <h3>cMAU by application</h3>
+                            <p class="section-sub">Attributed client-side MAU via <code>sdkAppId</code>. Cost share ≈ application cMAU ÷ org total for the same window.</p>
+                        </div>
+                        <button type="button" id="export-chargeback-apps" class="btn secondary small">Export CSV</button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th>Application</th>
+                                    <th>Name</th>
+                                    <th>Kind</th>
+                                    <th class="num">Peak cMAU</th>
+                                    <th class="num">Share of org</th>
+                                </tr>
+                            </thead>
+                            <tbody id="chargeback-apps-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="chargeback-apps-empty" class="helper-inline muted" style="display:none;">No application-level <strong>cMAU series</strong> for this period (<code>groupBy=sdkAppId</code>). Check the <strong>Registered applications</strong> table above — if apps exist but this stays empty, grouped usage may be unavailable for your plan or date range; confirm SDKs send <code>application.id</code>.</p>
+                </div>
+
+                <!-- Chargeback: unattributed cMAU gap -->
+                <div id="chargeback-gap-section" class="chargeback-section">
+                    <div class="section-header">
+                        <div>
+                            <h3>Unattributed cMAU by environment</h3>
+                            <p class="section-sub">Environment total minus sum of attributed application cMAU in that environment (same aggregation window).</p>
+                        </div>
+                        <button type="button" id="export-chargeback-gap" class="btn secondary small">Export CSV</button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Environment</th>
+                                    <th class="num">Env total cMAU</th>
+                                    <th class="num">Attributed</th>
+                                    <th class="num">Unattributed</th>
+                                    <th class="num">Gap %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="chargeback-gap-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="chargeback-gap-empty" class="helper-inline muted" style="display:none;">Gap rows require environment-level clientside MAU breakdown from the API.</p>
+                </div>
+
+                <!-- Chargeback: MAU by SDK type -->
+                <div id="chargeback-sdks-section" class="chargeback-section">
+                    <div class="section-header">
+                        <div>
+                            <h3>MAU by SDK type</h3>
+                            <p class="section-sub"><code>GET /usage/mau/sdks</code> — client vs server balance signal.</p>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th>SDK type / series</th>
+                                    <th class="num">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="chargeback-sdks-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="chargeback-sdks-empty" class="helper-inline muted" style="display:none;">No SDK breakdown returned for this period.</p>
+                </div>
+                </div><!-- /panel-cmau -->
+
+                <!-- Panel: Connections (service connection chargeback level = project / env) -->
+                <div id="panel-connections" class="dashboard-panel" style="display: none;">
+                    <div class="section-header">
+                        <div>
+                            <h3>Stream sources (peak in period)</h3>
+                            <p class="section-sub">Server stream uses <code>GET /usage/service-connections</code>; browser and mobile use <code>/usage/streams/{browser|mobile}</code>. Peaks are summed for org total.</p>
+                        </div>
+                    </div>
+                    <div class="stream-source-grid" id="stream-source-cards" aria-live="polite"></div>
+
+                    <div class="section-header section-header-spaced">
+                        <div>
+                            <h3>Connection allocation by project</h3>
+                            <p class="section-sub">Each project&rsquo;s peak connection usage vs org total — proportional model for the service-connection cost line.</p>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense" id="connections-allocation-table">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th class="num">Peak connections</th>
+                                    <th class="num">Share of org</th>
+                                </tr>
+                            </thead>
+                            <tbody id="connections-allocation-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="connections-allocation-empty" class="helper-inline muted" style="display:none;">No per-project connection breakdown for this period.</p>
+                </div>
+
+                <!-- Panel: Capacity -->
+                <div id="panel-capacity" class="dashboard-panel" style="display: none;">
+                <div id="capacity-meters" class="capacity-meters">
+                    <div class="capacity-meter-card" id="meter-cmau-wrap">
+                        <div class="capacity-meter-head">
+                            <h3>cMAU utilization</h3>
+                            <span class="meter-value" id="meter-cmau-label">--</span>
+                        </div>
+                        <div class="meter-track"><div class="meter-fill" id="meter-cmau-fill"></div></div>
+                        <p class="meter-footnote" id="meter-cmau-note">Set a contracted cMAU in Configuration to see utilization.</p>
+                    </div>
+                    <div class="capacity-meter-card" id="meter-conn-wrap">
+                        <div class="capacity-meter-head">
+                            <h3>Service connections utilization</h3>
+                            <span class="meter-value" id="meter-conn-label">--</span>
+                        </div>
+                        <div class="meter-track"><div class="meter-fill meter-fill-alt" id="meter-conn-fill"></div></div>
+                        <p class="meter-footnote" id="meter-conn-note">Peak streams in period vs your contracted ceiling.</p>
+                    </div>
+                </div>
+                <div class="capacity-checklist-card">
+                    <h3>Monthly capacity signals</h3>
+                    <p class="section-sub">Same usage data as chargeback; track growth and headroom (see <code>chargebackspec.md</code>).</p>
+                    <ul class="spec-checklist compact">
+                        <li>cMAU per application — approaching plan limits</li>
+                        <li>cMAU per environment — headroom</li>
+                        <li>Service connections peak — scaling</li>
+                        <li>MAU by SDK type — client vs server balance</li>
+                        <li>Optional: flag evaluation volume — load / sprawl</li>
+                    </ul>
+                </div>
+                </div><!-- /panel-capacity -->
+
+                <!-- Panel: Trends (time series & exploration — not primary chargeback surface) -->
+                <div id="panel-trends" class="dashboard-panel" style="display: none;">
                 <!-- Charts Section -->
-                <div class="charts-section">
+                <div class="charts-section" id="charts-section">
                     <div class="chart-container wide">
                         <div class="chart-header">
                             <h3>Client MAU Over Time</h3>
@@ -229,9 +454,9 @@
                 </div>
 
                 <!-- Project Breakdown Section -->
-                <div class="breakdown-section">
+                <div class="breakdown-section" id="breakdown-section">
                     <div class="section-header">
-                        <h3>Usage by Project</h3>
+                        <h3 id="breakdown-heading">Usage by Project</h3>
                         <div class="section-controls">
                             <input type="text" id="project-search" placeholder="Search projects..." class="search-input">
                             <select id="project-sort">
@@ -271,7 +496,7 @@
                                     <th>Date</th>
                                     <th>Project</th>
                                     <th>Environment</th>
-                                    <th>SDK Type</th>
+                                    <th>Metric</th>
                                     <th>MAU</th>
                                     <th>Connections</th>
                                 </tr>
@@ -282,6 +507,7 @@
                         </table>
                     </div>
                 </div>
+                </div><!-- /panel-trends -->
             </section>
 
             <!-- Empty State -->

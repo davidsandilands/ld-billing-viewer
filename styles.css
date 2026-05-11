@@ -160,9 +160,79 @@ body {
     letter-spacing: -0.02em;
 }
 
+.view-mode-status {
+    padding: var(--space-sm) var(--space-xl);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.view-mode-status-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-sm) var(--space-md);
+    max-width: 960px;
+}
+
+.view-mode-pill {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--bg-primary);
+    background: var(--accent-primary);
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-sm);
+}
+
+.view-mode-status-hint {
+    color: var(--accent-tertiary);
+    font-weight: 500;
+}
+
 .header-actions {
     display: flex;
-    gap: var(--space-sm);
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.header-view-modes {
+    max-width: 100%;
+}
+
+.view-mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg-tertiary);
+}
+
+.view-mode-btn {
+    font-family: var(--font-display);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.45rem 0.75rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.view-mode-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+
+.view-mode-btn.active {
+    color: var(--bg-primary);
+    background: var(--accent-primary);
 }
 
 /* Icon Buttons */
@@ -276,7 +346,12 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: var(--space-lg);
-    align-items: end;
+    align-items: start;
+}
+
+.config-grid .form-group.actions {
+    grid-column: 1 / -1;
+    align-items: flex-end;
 }
 
 /* Form Elements */
@@ -936,6 +1011,265 @@ select {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
+}
+
+/* Applications registry */
+.applications-registry {
+    margin-bottom: var(--space-xl);
+}
+
+.badge-count {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+}
+
+.inline-banner.warn {
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--warning);
+    background: rgba(210, 153, 34, 0.12);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+/* Chargeback & capacity */
+.checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.checkbox-row input {
+    margin-top: 0.2rem;
+}
+
+.capacity-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+}
+
+.capacity-field {
+    flex: 1;
+    min-width: 140px;
+}
+
+.mini-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: var(--space-xs);
+}
+
+.capacity-meters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-lg);
+    margin-bottom: var(--space-xl);
+}
+
+.capacity-meter-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+}
+
+.capacity-meter-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.capacity-meter-head h3 {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.meter-value {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--accent-primary);
+}
+
+.meter-track {
+    height: 10px;
+    background: var(--bg-tertiary);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.meter-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: var(--gradient-primary);
+    transition: width var(--transition-base);
+}
+
+.meter-fill-alt {
+    background: var(--gradient-secondary);
+}
+
+.meter-fill.meter-warn {
+    background: linear-gradient(90deg, var(--warning), #f59e0b);
+}
+
+.meter-fill.meter-danger {
+    background: linear-gradient(90deg, var(--error), #f85149);
+}
+
+.meter-footnote {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.chargeback-section {
+    margin-bottom: var(--space-xl);
+}
+
+.section-sub {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: var(--space-xs);
+    max-width: 52rem;
+}
+
+.section-sub code {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+}
+
+.helper-inline.muted {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.data-table.dense td,
+.data-table.dense th {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.875rem;
+}
+
+.data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+}
+
+/* Multi-panel dashboard (chargeback / capacity workflow) */
+.dashboard-panel {
+    margin-top: var(--space-xl);
+}
+
+.spec-overview-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    max-width: 52rem;
+}
+
+.spec-overview-card h3 {
+    font-size: 1.125rem;
+    margin-bottom: var(--space-sm);
+}
+
+.spec-checklist {
+    margin: var(--space-md) 0 0;
+    padding-left: 1.25rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.spec-checklist li {
+    margin-bottom: var(--space-sm);
+}
+
+.spec-checklist.compact {
+    margin-top: var(--space-sm);
+    font-size: 0.9rem;
+}
+
+.spec-checklist strong {
+    color: var(--text-primary);
+}
+
+.section-header-spaced {
+    margin-top: var(--space-2xl);
+}
+
+.stream-source-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-md);
+}
+
+.stream-source-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.stream-source-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.stream-source-value {
+    font-family: var(--font-mono);
+    font-size: 1.35rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.stream-source-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.conn-proj-name {
+    display: block;
+    font-weight: 500;
+}
+
+.conn-proj-key {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.capacity-checklist-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    margin-top: var(--space-xl);
+}
+
+.capacity-checklist-card h3 {
+    font-size: 1rem;
+    margin-bottom: var(--space-xs);
 }
 
 /* Utility Classes */
