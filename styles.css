@@ -5,45 +5,55 @@
 
 /* CSS Custom Properties */
 :root {
+    /* LD Brand Palette */
+    --ld-blue: #405BFF;
+    --ld-powder-blue: #7084FF;
+    --ld-cyan: #3DD6F5;
+    --ld-purple: #A34FDE;
+    --ld-pink: #FF35A2;
+    --ld-orange: #FF9D29;
+    --ld-yellow: #EBFF38;
+    --ld-green: #A9FF5E;
+
     /* Color Palette - Dark Theme (Default) */
-    --bg-primary: #0a0e14;
-    --bg-secondary: #12181f;
-    --bg-tertiary: #1a222c;
-    --bg-elevated: #222c38;
-    
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-muted: #6e7681;
-    
-    --accent-primary: #00d4aa;
-    --accent-secondary: #7c3aed;
-    --accent-tertiary: #f59e0b;
-    --accent-quaternary: #ec4899;
-    
-    --border-color: #30363d;
-    --border-subtle: #21262d;
-    
-    --success: #3fb950;
-    --warning: #d29922;
-    --error: #f85149;
-    --info: #58a6ff;
-    
+    --bg-primary: #080B18;
+    --bg-secondary: #0F1225;
+    --bg-tertiary: #171B35;
+    --bg-elevated: #1F2340;
+
+    --text-primary: #F0F2FF;
+    --text-secondary: #8B91B5;
+    --text-muted: #5C6285;
+
+    --accent-primary: #405BFF;
+    --accent-secondary: #A34FDE;
+    --accent-tertiary: #FF9D29;
+    --accent-quaternary: #3DD6F5;
+
+    --border-color: #252A4A;
+    --border-subtle: #1A1F3C;
+
+    --success: #A9FF5E;
+    --warning: #FF9D29;
+    --error: #FF35A2;
+    --info: #3DD6F5;
+
     /* Gradients */
-    --gradient-primary: linear-gradient(135deg, var(--accent-primary) 0%, #00a896 100%);
-    --gradient-secondary: linear-gradient(135deg, var(--accent-secondary) 0%, #a855f7 100%);
-    --gradient-accent: linear-gradient(135deg, var(--accent-tertiary) 0%, #fbbf24 100%);
-    --gradient-pink: linear-gradient(135deg, var(--accent-quaternary) 0%, #f472b6 100%);
-    --gradient-bg: radial-gradient(ellipse at top left, rgba(0, 212, 170, 0.08) 0%, transparent 50%),
-                   radial-gradient(ellipse at bottom right, rgba(124, 58, 237, 0.08) 0%, transparent 50%);
-    
+    --gradient-primary: linear-gradient(135deg, #405BFF 0%, #7084FF 100%);
+    --gradient-secondary: linear-gradient(135deg, #A34FDE 0%, #7084FF 100%);
+    --gradient-accent: linear-gradient(135deg, #FF9D29 0%, #EBFF38 100%);
+    --gradient-pink: linear-gradient(135deg, #FF35A2 0%, #3DD6F5 100%);
+    --gradient-bg: radial-gradient(ellipse at top left, rgba(64, 91, 255, 0.12) 0%, transparent 50%),
+                   radial-gradient(ellipse at bottom right, rgba(163, 79, 222, 0.08) 0%, transparent 50%);
+
     /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 20px rgba(0, 212, 170, 0.2);
-    
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6);
+    --shadow-glow: 0 0 24px rgba(64, 91, 255, 0.28);
+
     /* Typography */
-    --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     
     /* Spacing */
@@ -68,25 +78,25 @@
 
 /* Light Theme */
 [data-theme="light"] {
-    --bg-primary: #f6f8fa;
-    --bg-secondary: #ffffff;
-    --bg-tertiary: #f0f3f6;
-    --bg-elevated: #ffffff;
-    
-    --text-primary: #1f2328;
-    --text-secondary: #57606a;
-    --text-muted: #8b949e;
-    
-    --border-color: #d1d9e0;
-    --border-subtle: #e6eaef;
-    
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.12);
-    --shadow-glow: 0 0 20px rgba(0, 212, 170, 0.15);
-    
-    --gradient-bg: radial-gradient(ellipse at top left, rgba(0, 212, 170, 0.05) 0%, transparent 50%),
-                   radial-gradient(ellipse at bottom right, rgba(124, 58, 237, 0.05) 0%, transparent 50%);
+    --bg-primary: #F4F5FF;
+    --bg-secondary: #FFFFFF;
+    --bg-tertiary: #ECEEFF;
+    --bg-elevated: #FFFFFF;
+
+    --text-primary: #12153A;
+    --text-secondary: #454A7A;
+    --text-muted: #8B91B5;
+
+    --border-color: #D4D7F0;
+    --border-subtle: #E6E8F8;
+
+    --shadow-sm: 0 1px 2px rgba(64, 91, 255, 0.06);
+    --shadow-md: 0 4px 6px -1px rgba(64, 91, 255, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(64, 91, 255, 0.14);
+    --shadow-glow: 0 0 20px rgba(64, 91, 255, 0.18);
+
+    --gradient-bg: radial-gradient(ellipse at top left, rgba(64, 91, 255, 0.07) 0%, transparent 50%),
+                   radial-gradient(ellipse at bottom right, rgba(163, 79, 222, 0.05) 0%, transparent 50%);
 }
 
 /* Reset & Base */
@@ -407,7 +417,7 @@ input:focus,
 select:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.15);
+    box-shadow: 0 0 0 3px rgba(64, 91, 255, 0.2);
 }
 
 select {
@@ -519,7 +529,7 @@ select {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(10, 14, 20, 0.85);
+    background: rgba(8, 11, 24, 0.88);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
@@ -636,10 +646,10 @@ select {
     flex-shrink: 0;
 }
 
-.summary-card.cmau .card-icon { background: rgba(0, 212, 170, 0.15); color: var(--accent-primary); }
-.summary-card.connections .card-icon { background: rgba(124, 58, 237, 0.15); color: var(--accent-secondary); }
-.summary-card.experiments .card-icon { background: rgba(245, 158, 11, 0.15); color: var(--accent-tertiary); }
-.summary-card.projects .card-icon { background: rgba(236, 72, 153, 0.15); color: var(--accent-quaternary); }
+.summary-card.cmau .card-icon { background: rgba(64, 91, 255, 0.15); color: var(--accent-primary); }
+.summary-card.connections .card-icon { background: rgba(163, 79, 222, 0.15); color: var(--accent-secondary); }
+.summary-card.experiments .card-icon { background: rgba(255, 157, 41, 0.15); color: var(--accent-tertiary); }
+.summary-card.projects .card-icon { background: rgba(61, 214, 245, 0.15); color: var(--accent-quaternary); }
 
 .card-icon svg {
     width: 24px;
@@ -670,6 +680,39 @@ select {
 .card-subtitle {
     font-size: 0.75rem;
     color: var(--text-muted);
+}
+
+/* Capacity card: side-by-side stat layout when both dimensions are configured */
+.capacity-split {
+    display: flex;
+    gap: 0.9rem;
+    align-items: baseline;
+}
+.capacity-stat {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.05;
+}
+.capacity-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.15rem;
+}
+.capacity-stat-value {
+    font-size: 1.45rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    letter-spacing: -0.02em;
+}
+.capacity-stat-value.is-warn { color: var(--ld-orange); }
+.capacity-stat-value.is-danger { color: var(--ld-pink); }
+.capacity-stat-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border-color, #252A4A);
+    opacity: 0.6;
 }
 
 /* Charts Section */
@@ -1124,7 +1167,7 @@ select {
 }
 
 .meter-fill.meter-warn {
-    background: linear-gradient(90deg, var(--warning), #f59e0b);
+    background: linear-gradient(90deg, #FF9D29, #EBFF38);
 }
 
 .meter-fill.meter-danger {
@@ -1270,6 +1313,142 @@ select {
 .capacity-checklist-card h3 {
     font-size: 1rem;
     margin-bottom: var(--space-xs);
+}
+
+/* Card-as-navigation */
+.summary-card[data-view-mode] {
+    cursor: pointer;
+    user-select: none;
+}
+
+.summary-card[data-view-mode]:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+}
+
+.summary-card[data-view-mode]:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+
+.summary-card.cmau.is-nav-active {
+    border-color: var(--ld-blue);
+    box-shadow: 0 0 0 1px var(--ld-blue), 0 0 24px rgba(64, 91, 255, 0.28);
+}
+
+.summary-card.connections.is-nav-active {
+    border-color: var(--ld-purple);
+    box-shadow: 0 0 0 1px var(--ld-purple), 0 0 24px rgba(163, 79, 222, 0.28);
+}
+
+.summary-card.projects.is-nav-active {
+    border-color: var(--ld-cyan);
+    box-shadow: 0 0 0 1px var(--ld-cyan), 0 0 24px rgba(61, 214, 245, 0.28);
+}
+
+/* Coming soon card */
+.summary-card.coming-soon {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.coming-soon-badge {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+/* Section header action cluster (toggle + export button) */
+.section-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-shrink: 0;
+}
+
+.toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+/* Zero-cMAU rows in the app table */
+.data-table tbody tr.row-zero td {
+    opacity: 0.45;
+}
+
+/* Unattributed (LD 'unknown' sdkAppId) row in the app table */
+.data-table tbody tr.row-unattributed td {
+    background: rgba(255, 157, 41, 0.08);
+    font-style: italic;
+}
+.data-table tbody tr.row-unattributed td:first-child code {
+    color: var(--ld-orange);
+}
+
+/* Project tags in cMAU table */
+.proj-tags-cell {
+    max-width: 260px;
+}
+
+.proj-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    background: rgba(64, 91, 255, 0.12);
+    color: var(--ld-powder-blue);
+    border: 1px solid rgba(64, 91, 255, 0.22);
+    padding: 1px 7px;
+    border-radius: var(--radius-sm);
+    margin: 1px 3px 1px 0;
+    white-space: nowrap;
+}
+
+.proj-tag-none {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Capacity panel — accessible inline from connections/cMAU panels */
+.capacity-inline-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8125rem;
+    color: var(--accent-primary);
+    text-decoration: none;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-top: var(--space-md);
+    font-family: var(--font-display);
+}
+
+.capacity-inline-link:hover {
+    text-decoration: underline;
 }
 
 /* Utility Classes */

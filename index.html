@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=11">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
@@ -25,8 +25,8 @@
                 </div>
                 <h1>LD Billing Viewer</h1>
             </div>
-            <div class="header-actions header-view-modes">
-                <div class="view-mode-toggle" role="tablist" aria-label="Chargeback and capacity views">
+            <div class="header-actions">
+                <div class="view-mode-toggle" role="tablist" aria-hidden="true" style="display:none;">
                     <button type="button" class="view-mode-btn active" data-view-mode="overview" role="tab" aria-selected="true">Overview</button>
                     <button type="button" class="view-mode-btn" data-view-mode="cmau" role="tab" aria-selected="false">cMAU</button>
                     <button type="button" class="view-mode-btn" data-view-mode="connections" role="tab" aria-selected="false">Connections</button>
@@ -45,7 +45,7 @@
             </div>
         </header>
 
-        <div id="view-mode-status" class="view-mode-status" aria-live="polite">
+        <div id="view-mode-status" class="view-mode-status" aria-live="polite" style="display:none;">
             <div class="view-mode-status-inner">
                 <span class="view-mode-pill" id="view-mode-status-pill">Overview</span>
                 <span id="view-mode-status-desc">Org snapshot and chargeback checklist.</span>
@@ -177,7 +177,7 @@
             <section id="dashboard" class="dashboard" style="display: none;">
                 <!-- Summary Cards -->
                 <div class="summary-cards">
-                    <div class="summary-card cmau">
+                    <div class="summary-card cmau" data-view-mode="cmau" role="button" tabindex="0" aria-label="cMAU — application attribution and chargeback">
                         <div class="card-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -192,7 +192,7 @@
                         </div>
                     </div>
 
-                    <div class="summary-card connections">
+                    <div class="summary-card connections" data-view-mode="connections" role="button" tabindex="0" aria-label="Service connections — stream attribution and allocation">
                         <div class="card-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
@@ -207,7 +207,8 @@
                         </div>
                     </div>
 
-                    <div class="summary-card experiments">
+                    <div class="summary-card experiments coming-soon" aria-disabled="true">
+                        <span class="coming-soon-badge">Coming soon</span>
                         <div class="card-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
@@ -220,16 +221,16 @@
                         </div>
                     </div>
 
-                    <div class="summary-card projects">
+                    <div class="summary-card projects" data-view-mode="capacity" role="button" tabindex="0" aria-label="Capacity — utilization vs contracted limits">
                         <div class="card-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
                             </svg>
                         </div>
                         <div class="card-content">
-                            <span class="card-label">Active Projects</span>
-                            <span class="card-value" id="total-projects">--</span>
-                            <span class="card-subtitle">With usage data</span>
+                            <span class="card-label">Capacity</span>
+                            <span class="card-value" id="total-capacity">--</span>
+                            <span class="card-subtitle" id="capacity-card-subtitle">Set a contracted limit to enable</span>
                         </div>
                     </div>
                 </div>
@@ -250,30 +251,14 @@
 
                 <!-- Panel: cMAU & application attribution -->
                 <div id="panel-cmau" class="dashboard-panel" style="display: none;">
-                <!-- Applications registry: from GET /applications -->
-                <div id="applications-registry-section" class="applications-registry">
-                    <div class="section-header">
-                        <div>
-                            <h3>Registered applications</h3>
-                            <p class="section-sub">From <code>GET /api/v2/applications</code>. SDKs must send <code>application.id</code> at init for an app to appear and for cMAU attribution.</p>
-                        </div>
-                        <span class="badge-count" id="applications-count-badge" style="display:none;"></span>
-                    </div>
-                    <div id="applications-fetch-error" class="inline-banner warn" style="display: none;" role="alert"></div>
-                    <div class="table-wrapper">
-                        <table class="data-table dense" id="applications-registry-table">
-                            <thead>
-                                <tr>
-                                    <th>Key</th>
-                                    <th>Name</th>
-                                    <th>Kind</th>
-                                    <th>Auto-added</th>
-                                </tr>
-                            </thead>
-                            <tbody id="applications-registry-body"></tbody>
-                        </table>
-                    </div>
-                    <p id="applications-registry-empty" class="helper-inline muted" style="display:none;">No applications returned. If an error appears above, fix token permissions or API access. Otherwise no apps have been registered yet in LaunchDarkly.</p>
+                <!-- Applications registry error banner (only visible on API error) -->
+                <div id="applications-registry-section" class="applications-registry" style="display:none;">
+                    <div id="applications-fetch-error" class="inline-banner warn" role="alert"></div>
+                    <!-- hidden elements kept for JS compat -->
+                    <span class="badge-count" id="applications-count-badge" style="display:none;"></span>
+                    <table style="display:none;"><tbody id="applications-registry-body"></tbody></table>
+                    <p id="applications-registry-empty" style="display:none;"></p>
+                    <table style="display:none;" id="applications-registry-table"></table>
                 </div>
 
                 <!-- Chargeback: cMAU by application -->
@@ -281,9 +266,16 @@
                     <div class="section-header">
                         <div>
                             <h3>cMAU by application</h3>
-                            <p class="section-sub">Attributed client-side MAU via <code>sdkAppId</code>. Cost share ≈ application cMAU ÷ org total for the same window.</p>
+                            <p class="section-sub">All registered applications. Cost share ≈ application cMAU ÷ org total for the same window. SDKs must send <code>application.id</code> at init for attribution.</p>
+                            <p id="chargeback-apps-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
                         </div>
-                        <button type="button" id="export-chargeback-apps" class="btn secondary small">Export CSV</button>
+                        <div class="section-header-actions">
+                            <label class="toggle-label" title="Show only applications with attributed cMAU">
+                                <input type="checkbox" id="hide-zero-cmau-apps">
+                                <span>Hide unused</span>
+                            </label>
+                            <button type="button" id="export-chargeback-apps" class="btn secondary small">Export CSV</button>
+                        </div>
                     </div>
                     <div class="table-wrapper">
                         <table class="data-table dense">
@@ -292,6 +284,7 @@
                                     <th>Application</th>
                                     <th>Name</th>
                                     <th>Kind</th>
+                                    <th>Projects</th>
                                     <th class="num">Peak cMAU</th>
                                     <th class="num">Share of org</th>
                                 </tr>
@@ -381,6 +374,38 @@
                         </table>
                     </div>
                     <p id="connections-allocation-empty" class="helper-inline muted" style="display:none;">No per-project connection breakdown for this period.</p>
+                    <p id="connections-attribution-note" class="helper-inline muted" style="display:none;"></p>
+
+                    <div class="section-header section-header-spaced">
+                        <div>
+                            <h3>Connection allocation by application</h3>
+                            <p class="section-sub">Per-application peak connections across server, browser, and mobile streams. SDKs must send <code>application.id</code> at init for attribution.</p>
+                            <p id="connections-by-app-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
+                        </div>
+                        <div class="section-header-actions">
+                            <label class="toggle-label" title="Show only applications with attributed connections">
+                                <input type="checkbox" id="hide-zero-conn-apps">
+                                <span>Hide unused</span>
+                            </label>
+                            <button type="button" id="export-connections-by-app" class="btn secondary small">Export CSV</button>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th>Application</th>
+                                    <th>Name</th>
+                                    <th>Kind</th>
+                                    <th>Projects</th>
+                                    <th class="num">Peak connections</th>
+                                    <th class="num">Share of org</th>
+                                </tr>
+                            </thead>
+                            <tbody id="connections-by-app-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="connections-by-app-empty" class="helper-inline muted" style="display:none;">No per-application connection breakdown for this period.</p>
                 </div>
 
                 <!-- Panel: Capacity -->
@@ -422,7 +447,10 @@
                 <div class="charts-section" id="charts-section">
                     <div class="chart-container wide">
                         <div class="chart-header">
-                            <h3>Client MAU Over Time</h3>
+                            <div>
+                                <h3>Client MAU Over Time</h3>
+                                <p class="section-sub">Running total of daily unique-user counts. <strong>Approximation</strong> &mdash; users active on multiple days are counted on each. Not the billed figure (LD bills on the rolling 30-day peak; see Capacity panel).</p>
+                            </div>
                             <div class="chart-controls">
                                 <select id="cmau-chart-type">
                                     <option value="line">Line Chart</option>
@@ -438,7 +466,10 @@
 
                     <div class="chart-container wide">
                         <div class="chart-header">
-                            <h3>Service Connections Over Time</h3>
+                            <div>
+                                <h3>Service Connections Over Time</h3>
+                                <p class="section-sub">Daily peak streams plus a running max line &mdash; the running max is the billing-relevant figure (LD bills on peak in the period).</p>
+                            </div>
                             <div class="chart-controls">
                                 <select id="connections-chart-type">
                                     <option value="line">Line Chart</option>
@@ -556,7 +587,7 @@
         </footer>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>
 

@@ -67,7 +67,9 @@ const elements = {
     connectionsPeriod: document.getElementById('connections-period'),
     totalExperiments: document.getElementById('total-experiments'),
     experimentsPeriod: document.getElementById('experiments-period'),
-    totalProjects: document.getElementById('total-projects'),
+    totalCapacity: document.getElementById('total-capacity'),
+    totalProjects: document.getElementById('total-projects'), // legacy id (may be null if removed)
+    capacityCardSubtitle: document.getElementById('capacity-card-subtitle'),
     // Chart elements
     cmauChart: document.getElementById('cmau-chart'),
     connectionsChart: document.getElementById('connections-chart'),
@@ -117,7 +119,11 @@ const elements = {
     panelTrends: document.getElementById('panel-trends'),
     streamSourceCards: document.getElementById('stream-source-cards'),
     connectionsAllocationBody: document.getElementById('connections-allocation-body'),
-    connectionsAllocationEmpty: document.getElementById('connections-allocation-empty')
+    connectionsAllocationEmpty: document.getElementById('connections-allocation-empty'),
+    connectionsByAppBody: document.getElementById('connections-by-app-body'),
+    connectionsByAppEmpty: document.getElementById('connections-by-app-empty'),
+    connectionsByAppMeta: document.getElementById('connections-by-app-meta'),
+    exportConnectionsByApp: document.getElementById('export-connections-by-app')
 };
 
 // ==========================================
@@ -474,26 +480,69 @@ function resolveEnvironmentKeys(projectKey, environmentId) {
         : { key: String(environmentId), name: String(environmentId) };
 }
 
-function buildChargebackApplicationRows(columnEntries, applications, orgCmauTotal) {
+/**
+ * Build a map of appKey → sorted array of project keys that app appears in,
+ * derived from the triple-grouped (projectId × environmentId × sdkAppId) columns.
+ */
+function buildAppProjectMap(tripleCols) {
+    const map = new Map();
+    tripleCols.forEach(col => {
+        const appKey = extractSdkAppId(col.meta);
+        const pid = extractProjectId(col.meta);
+        const projKey = resolveProjectKeyFromId(pid);
+        if (!appKey || !projKey) return;
+        if (!map.has(appKey)) map.set(appKey, new Set());
+        map.get(appKey).add(projKey);
+    });
+    // Convert Sets to sorted arrays
+    map.forEach((set, key) => map.set(key, [...set].sort()));
+    return map;
+}
+
+function buildChargebackApplicationRows(columnEntries, applications, orgCmauTotal, aggregationType = 'rolling_30d', appProjectMap = null) {
     const byKey = new Map(applications.map(a => [a.key, a]));
-    const rows = columnEntries.map(e => {
+
+    // Build rows from cMAU grouped data
+    const rowMap = new Map();
+    columnEntries.forEach(e => {
         const key = extractSdkAppId(e.meta) || `column-${e.index}`;
         const app = byKey.get(key);
-        const peak = e.peak;
-        const share = orgCmauTotal > 0 ? (peak / orgCmauTotal) * 100 : 0;
-        return {
+        const value = getSeriesValue(e.series, aggregationType);
+        const share = orgCmauTotal > 0 ? (value / orgCmauTotal) * 100 : 0;
+        rowMap.set(key, {
             key,
             name: app?.name || key,
             kind: app?.kind || '—',
-            peak,
-            share
-        };
+            peak: value,
+            share,
+            projects: appProjectMap ? (appProjectMap.get(key) || []) : []
+        });
     });
-    rows.sort((a, b) => b.peak - a.peak);
+
+    // Merge in all registered applications that had no cMAU data (show as 0)
+    applications.forEach(app => {
+        if (!rowMap.has(app.key)) {
+            rowMap.set(app.key, {
+                key: app.key,
+                name: app.name || app.key,
+                kind: app.kind || '—',
+                peak: 0,
+                share: 0,
+                projects: appProjectMap ? (appProjectMap.get(app.key) || []) : []
+            });
+        }
+    });
+
+    const rows = [...rowMap.values()];
+    rows.sort((a, b) => b.peak - a.peak || a.key.localeCompare(b.key));
     return rows;
 }
 
-function buildGapRows(envLevelCols, appEnvLevelCols) {
+function buildGapRows(envLevelCols, appEnvLevelCols, aggregationType = 'rolling_30d') {
+    // LD's API returns unattributed cMAU as a literal sdkAppId bucket, typically "Unknown" (capital U)
+    // but case can vary; match leniently.
+    const isUnknownAppId = (s) => !s || String(s).toLowerCase() === 'unknown';
+
     const envTotals = new Map();
     envLevelCols.forEach(e => {
         const pid = extractProjectId(e.meta);
@@ -501,36 +550,76 @@ function buildGapRows(envLevelCols, appEnvLevelCols) {
         const pk = resolveProjectKeyFromId(pid);
         if (!pk || !eid) return;
         const k = `${pk}\t${eid}`;
-        envTotals.set(k, Math.max(envTotals.get(k) || 0, e.peak));
+        const v = getSeriesValue(e.series, aggregationType);
+        envTotals.set(k, Math.max(envTotals.get(k) || 0, v));
     });
 
+    // Split the triple-grouped data into "attributed" (named apps) and "unattributed" (Unknown bucket).
+    // Surfacing the Unknown bucket directly is more accurate than envTotal - sum(apps): the triple
+    // groupBy sums per (proj,env,app) which can multi-count context keys across apps and make the
+    // subtraction yield 0 or negative — LD's own Unknown bucket is the authoritative per-env unattributed.
     const attributed = new Map();
+    const unattributedByEnv = new Map();
     appEnvLevelCols.forEach(e => {
         const pid = extractProjectId(e.meta);
         const eid = extractEnvironmentId(e.meta);
+        const appId = extractSdkAppId(e.meta);
         const pk = resolveProjectKeyFromId(pid);
         if (!pk || !eid) return;
         const k = `${pk}\t${eid}`;
-        attributed.set(k, (attributed.get(k) || 0) + e.peak);
+        const v = getSeriesValue(e.series, aggregationType);
+        if (isUnknownAppId(appId)) {
+            unattributedByEnv.set(k, (unattributedByEnv.get(k) || 0) + v);
+        } else {
+            attributed.set(k, (attributed.get(k) || 0) + v);
+        }
     });
 
+    // Include every env that has any signal — env-total, attributed apps, or unattributed bucket.
+    const allKeys = new Set([
+        ...envTotals.keys(),
+        ...attributed.keys(),
+        ...unattributedByEnv.keys()
+    ]);
+
     const rows = [];
-    envTotals.forEach((total, k) => {
+    allKeys.forEach(k => {
         const [projKey, envIdPart] = k.split('\t');
+        const total = envTotals.get(k) || 0;
         const attr = attributed.get(k) || 0;
-        const gap = Math.max(0, total - attr);
-        const gapPct = total > 0 ? (gap / total) * 100 : 0;
+        const directUnattr = unattributedByEnv.get(k) || 0;
+        // Prefer LD's directly-reported Unknown bucket if present; otherwise fall back to subtraction.
+        const gap = directUnattr > 0 ? directUnattr : Math.max(0, total - attr);
+        // Denominator: use envTotal if it's at least as big as attr+unattr; otherwise the sum we observed.
+        const denom = Math.max(total, attr + directUnattr);
+        const gapPct = denom > 0 ? (gap / denom) * 100 : 0;
         const envInfo = resolveEnvironmentKeys(projKey, envIdPart);
         rows.push({
             projectKey: projKey,
             envKey: envInfo.key,
             envName: envInfo.name,
-            envTotal: total,
+            envTotal: Math.max(total, attr + directUnattr),
             attributed: attr,
             gap,
             gapPct
         });
     });
+
+    console.log('[buildGapRows diag]', {
+        envPairCols: envLevelCols.length,
+        tripleCols: appEnvLevelCols.length,
+        envTotalsSize: envTotals.size,
+        attributedSize: attributed.size,
+        unattributedByEnvSize: unattributedByEnv.size,
+        unattributedSample: [...unattributedByEnv.entries()].slice(0, 5),
+        gapRowsWithNonZero: rows.filter(r => r.gap > 0).length,
+        totalRows: rows.length
+    });
+    if (state) state.lastGapDiag = {
+        unattributedByEnv: [...unattributedByEnv.entries()],
+        rows
+    };
+
     rows.sort((a, b) => b.gap - a.gap);
     return rows;
 }
@@ -680,8 +769,6 @@ function extractProjectsFromSeries(series, projects) {
     // Try to group by project if series points have project identifiers
     const projectDataMap = new Map();
     
-    console.log('Extracting projects from series, sample point:', series[0]);
-    
     series.forEach(point => {
         const date = resolveTimestamp(point);
         if (!date) return;
@@ -721,19 +808,13 @@ function extractProjectsFromSeries(series, projects) {
                     });
                 }
                 projectDataMap.get(projectKey).series.push({ date, value });
-            } else {
-                // Log unmatched keys for debugging
-                console.log('Unmatched series key:', key, 'value:', value);
             }
         });
     });
     
-    // Sort series for each project
     projectDataMap.forEach(entry => {
         entry.series.sort((a, b) => a.date - b.date);
     });
-    
-    console.log('Extracted projects from series:', Array.from(projectDataMap.keys()));
     return Array.from(projectDataMap.values());
 }
 
@@ -770,11 +851,11 @@ async function fetchServiceConnections(from, to, groupByProject = false) {
             from: formatDateForApi(from),
             to: formatDateForApi(to)
         };
-        
+
         if (groupByProject) {
             params.groupBy = 'projectId';
         }
-        
+
         const data = await apiRequest('/usage/service-connections', params, { apiVersion: 'beta' });
         return data;
     } catch (error) {
@@ -784,14 +865,35 @@ async function fetchServiceConnections(from, to, groupByProject = false) {
 }
 
 /**
- * Fetch stream (connections) usage for browser/mobile
+ * Fetch service connections with an arbitrary groupBy (or comma-separated list of dimensions).
+ * Used for by-application allocation: groupBy='sdkAppId' or 'projectId,sdkAppId'.
+ * Per the user, LD's /usage/service-connections endpoint accepts sdkAppId even though it's not documented.
  */
-async function fetchStreamsUsage(source, from, to) {
+async function fetchServiceConnectionsBy(groupBy, from, to) {
     try {
-        const data = await apiRequest(`/usage/streams/${source}`, {
+        const params = {
+            from: formatDateForApi(from),
+            to: formatDateForApi(to),
+            groupBy
+        };
+        return await apiRequest('/usage/service-connections', params, { apiVersion: 'beta' });
+    } catch (error) {
+        console.warn(`Service connections groupBy=${groupBy} not available:`, error.message);
+        return null;
+    }
+}
+
+/**
+ * Fetch stream (connections) usage for browser/mobile, optionally grouped by project
+ */
+async function fetchStreamsUsage(source, from, to, groupBy = null) {
+    try {
+        const params = {
             from: formatDateForApi(from),
             to: formatDateForApi(to)
-        }, { apiVersion: 'beta' });
+        };
+        if (groupBy) params.groupBy = groupBy;
+        const data = await apiRequest(`/usage/streams/${source}`, params, { apiVersion: 'beta' });
         return data;
     } catch (error) {
         console.error(`Error fetching ${source} streams:`, error);
@@ -868,18 +970,27 @@ async function fetchAllUsageData() {
             serviceConnectionsByProject,
             clientStreams,
             mobileStreams,
+            browserStreamsByProject,
+            mobileStreamsByProject,
             experimentationKeys,
             applications,
             mauSdksRaw,
             cmauByAppRaw,
             envPairRaw,
             tripleRaw,
-            cmauChargebackTotalRaw
+            cmauChargebackTotalRaw,
+            serviceConnectionsByApp,
+            serviceConnectionsByProjectApp,
+            browserStreamsByApp,
+            mobileStreamsByApp,
+            mauDailyIncrementalRaw
         ] = await Promise.all([
             fetchServiceConnections(start, end),
             fetchServiceConnections(start, end, true),
             fetchStreamsUsage('browser', start, end),
             fetchStreamsUsage('mobile', start, end),
+            fetchStreamsUsage('browser', start, end, 'projectId').catch(() => null),
+            fetchStreamsUsage('mobile', start, end, 'projectId').catch(() => null),
             fetchExperimentationUsage(start, end),
             fetchAllApplications().catch(err => {
                 applicationsFetchError = err.message || String(err);
@@ -902,23 +1013,28 @@ async function fetchAllUsageData() {
             fetchClientsideMauUsage(start, end, {
                 contextKinds: chargebackContexts,
                 aggregationType
-            }).catch(() => ({ metadata: [], series: [] }))
+            }).catch(() => ({ metadata: [], series: [] })),
+            fetchServiceConnectionsBy('sdkAppId', start, end),
+            fetchServiceConnectionsBy('projectId,sdkAppId', start, end),
+            fetchStreamsUsage('browser', start, end, 'sdkAppId').catch(() => null),
+            fetchStreamsUsage('mobile', start, end, 'sdkAppId').catch(() => null),
+            fetchClientsideMauUsage(start, end, {
+                contextKinds,
+                aggregationType: 'daily_incremental'
+            }).catch(() => null)
         ]);
             
-        console.log('Connections data:', {
-            serviceConnections,
-            browser: clientStreams,
-            mobile: mobileStreams
-        });
-
         state.applications = applications;
         state.applicationsError = applicationsFetchError;
 
         const appCols = groupedUsageToColumns(cmauByAppRaw);
-        const orgCmauChargeback = getPeakValue(extractTimeSeriesData(cmauChargebackTotalRaw));
+        const tripleColData = groupedUsageToColumns(tripleRaw);
+        const appProjectMap = buildAppProjectMap(tripleColData);
+        const cmauTSeries = extractTimeSeriesData(cmauChargebackTotalRaw);
+        const orgCmauChargeback = getSeriesValue(cmauTSeries, aggregationType);
         state.chargeback = {
-            apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback),
-            gap: buildGapRows(groupedUsageToColumns(envPairRaw), groupedUsageToColumns(tripleRaw)),
+            apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback, aggregationType, appProjectMap),
+            gap: buildGapRows(groupedUsageToColumns(envPairRaw), tripleColData, aggregationType),
             mauSdks: mauSdksRaw,
             orgCmauTotal: orgCmauChargeback
         };
@@ -929,10 +1045,6 @@ async function fetchAllUsageData() {
         let mauSource = 'clientside';
 
         try {
-            // Check date range - API might have limits
-            const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-            console.log(`Fetching CMAU for ${daysDiff} day range`);
-            
             mauData = await fetchClientsideMauUsage(start, end, {
                 contextKinds,
                 aggregationType
@@ -943,8 +1055,6 @@ async function fetchAllUsageData() {
                 contextKinds,
                 aggregationType
             });
-            
-            console.log('Grouped projects raw response:', groupedProjects);
             
             // Check if grouped response has multiple projects (groupby worked)
             if (groupedProjects && groupedProjects.metadata && groupedProjects.series && groupedProjects.metadata.length > 1) {
@@ -961,7 +1071,6 @@ async function fetchAllUsageData() {
                             !key.includes('Context:');
                     });
                     
-                    console.log('Using grouped response with', projectUsageEntries.length, 'projects');
                 } catch (transformError) {
                     console.error('Error transforming grouped response:', transformError);
                     projectUsageEntries = [];
@@ -1009,12 +1118,30 @@ async function fetchAllUsageData() {
             mobile: mobileStreams
         };
         
-        // Store per-project connections data
+        // Store per-project connections data (server always; browser/mobile when API supports groupBy)
         let projectConnectionsEntries = [];
         if (serviceConnectionsByProject && serviceConnectionsByProject.metadata && serviceConnectionsByProject.metadata.length > 1) {
             projectConnectionsEntries = transformProjectGroupResponse(serviceConnectionsByProject);
         }
         state.usageData.projectConnections = projectConnectionsEntries;
+
+        state.usageData.projectConnectionsBrowser = (browserStreamsByProject?.metadata?.length > 1)
+            ? transformProjectGroupResponse(browserStreamsByProject)
+            : null;
+        state.usageData.projectConnectionsMobile = (mobileStreamsByProject?.metadata?.length > 1)
+            ? transformProjectGroupResponse(mobileStreamsByProject)
+            : null;
+
+        // Raw by-application connection responses (server + browser + mobile, each grouped by sdkAppId).
+        // serviceConnectionsByProjectApp adds projectId for the app→project mapping.
+        state.usageData.serviceConnectionsByApp = serviceConnectionsByApp;
+        state.usageData.serviceConnectionsByProjectApp = serviceConnectionsByProjectApp;
+        state.usageData.browserStreamsByApp = browserStreamsByApp;
+        state.usageData.mobileStreamsByApp = mobileStreamsByApp;
+
+        // Daily-incremental cMAU series used for the "cumulative unique users (approx)" chart line.
+        // Independent of the user's selected chargeback aggregation so the chart always has a stable basis.
+        state.usageData.mauDailyIncremental = mauDailyIncrementalRaw;
         
         // Store experimentation data
         state.usageData.experiments = experimentationKeys;
@@ -1053,56 +1180,27 @@ function updateDashboard() {
 }
 
 function renderApplicationsRegistry() {
-    const apps = state.applications || [];
     const err = state.applicationsError;
+    const section = document.getElementById('applications-registry-section');
+
+    // Show the section only when there is an API error to surface
+    if (section) section.style.display = err ? 'block' : 'none';
 
     if (elements.applicationsFetchError) {
         if (err) {
             elements.applicationsFetchError.style.display = 'block';
             elements.applicationsFetchError.textContent =
-                `Could not load applications from the API (403/401 usually means the token lacks Applications access): ${err}`;
+                `Could not load applications (403/401 usually means the token lacks Applications access): ${err}`;
         } else {
             elements.applicationsFetchError.style.display = 'none';
             elements.applicationsFetchError.textContent = '';
-        }
-    }
-
-    if (elements.applicationsCountBadge) {
-        if (apps.length) {
-            elements.applicationsCountBadge.style.display = 'inline-block';
-            elements.applicationsCountBadge.textContent = `${apps.length} registered`;
-        } else {
-            elements.applicationsCountBadge.style.display = 'none';
-        }
-    }
-
-    if (elements.applicationsRegistryBody) {
-        if (apps.length) {
-            elements.applicationsRegistryBody.innerHTML = apps.map(a => `
-                <tr>
-                    <td><code>${escapeHtml(a.key)}</code></td>
-                    <td>${escapeHtml(a.name || '—')}</td>
-                    <td>${escapeHtml(a.kind || '—')}</td>
-                    <td>${a.autoAdded ? 'Yes' : 'No'}</td>
-                </tr>
-            `).join('');
-            if (elements.applicationsRegistryEmpty) elements.applicationsRegistryEmpty.style.display = 'none';
-            if (elements.applicationsRegistryTable) elements.applicationsRegistryTable.style.display = '';
-        } else {
-            elements.applicationsRegistryBody.innerHTML = '';
-            if (elements.applicationsRegistryEmpty) {
-                elements.applicationsRegistryEmpty.style.display = err ? 'none' : 'block';
-            }
-            if (elements.applicationsRegistryTable) {
-                elements.applicationsRegistryTable.style.display = err ? 'none' : '';
-            }
         }
     }
 }
 
 function getTotalCmauPeak() {
     const mauSeries = extractTimeSeriesData(state.usageData.mau);
-    return mauSeries.reduce((max, point) => Math.max(max, point.value), 0);
+    return getSeriesValue(mauSeries, state.filters?.aggregationType || 'rolling_30d');
 }
 
 function getTotalConnectionsPeak() {
@@ -1126,43 +1224,63 @@ function getPeakForStreamSource(source) {
 }
 
 function computeProjectConnectionRows() {
-    const connectionsEntries = state.usageData.projectConnections || [];
-    const connectionsMap = new Map();
-    connectionsEntries.forEach(entry => {
-        const key = entry.projectKey;
-        if (key && !key.startsWith('unknown-project-') && key !== 'series' && !key.includes('Context:')) {
+    function buildConnMap(entries) {
+        const map = new Map();
+        (entries || []).forEach(entry => {
+            const key = entry.projectKey;
+            if (!key || key.startsWith('unknown-project-') || key.startsWith('deleted-project-') ||
+                key === 'series' || key.includes('Context:')) return;
             const series = entry.series || extractTimeSeriesData(entry.data);
-            connectionsMap.set(key, {
+            map.set(key, {
                 projectKey: key,
                 projectName: entry.projectName || entry.projectKey,
                 connections: getPeakValue(series)
             });
-        }
+        });
+        return map;
+    }
+
+    const serverMap = buildConnMap(state.usageData.projectConnections);
+    const browserEntries = state.usageData.projectConnectionsBrowser;
+    const mobileEntries = state.usageData.projectConnectionsMobile;
+    const browserMap = browserEntries ? buildConnMap(browserEntries) : null;
+    const mobileMap = mobileEntries ? buildConnMap(mobileEntries) : null;
+
+    const hasBrowserByProject = browserMap !== null && browserMap.size > 0;
+    const hasMobileByProject = mobileMap !== null && mobileMap.size > 0;
+
+    // Denominator is the sum of peaks for whichever sources we have per-project data for,
+    // so shares are computed over the same universe as the numerators.
+    const attributablePeak = getPeakForStreamSource('server')
+        + (hasBrowserByProject ? getPeakForStreamSource('browser') : 0)
+        + (hasMobileByProject ? getPeakForStreamSource('mobile') : 0);
+
+    const allKeys = new Set([
+        ...state.projects.map(p => p.key),
+        ...serverMap.keys(),
+        ...(hasBrowserByProject ? browserMap.keys() : []),
+        ...(hasMobileByProject ? mobileMap.keys() : [])
+    ]);
+
+    let rows = [];
+    allKeys.forEach(key => {
+        const proj = state.projects.find(p => p.key === key);
+        const serverConn = serverMap.get(key)?.connections || 0;
+        const browserConn = hasBrowserByProject ? (browserMap.get(key)?.connections || 0) : 0;
+        const mobileConn = hasMobileByProject ? (mobileMap.get(key)?.connections || 0) : 0;
+        rows.push({
+            key,
+            name: proj?.name || serverMap.get(key)?.projectName || key,
+            connections: serverConn + browserConn + mobileConn
+        });
     });
 
-    let rows = state.projects.map(project => ({
-        key: project.key,
-        name: project.name || project.key,
-        connections: connectionsMap.get(project.key)?.connections || 0
-    }));
-
-    connectionsMap.forEach((v, k) => {
-        if (!rows.some(r => r.key === k)) {
-            rows.push({
-                key: k,
-                name: v.projectName || k,
-                connections: v.connections
-            });
-        }
-    });
-
-    const orgTotal = getTotalConnectionsPeak();
     rows = rows.map(r => ({
         ...r,
-        share: orgTotal > 0 ? (r.connections / orgTotal) * 100 : 0
+        share: attributablePeak > 0 ? (r.connections / attributablePeak) * 100 : 0
     }));
     rows.sort((a, b) => b.connections - a.connections);
-    return { rows, orgTotal };
+    return { rows, orgTotal: getTotalConnectionsPeak(), hasBrowserByProject, hasMobileByProject };
 }
 
 function renderStreamSourceCards() {
@@ -1194,6 +1312,7 @@ function renderStreamSourceCards() {
 function renderConnectionsAllocation() {
     const tbody = elements.connectionsAllocationBody;
     const emptyEl = elements.connectionsAllocationEmpty;
+    const noteEl = document.getElementById('connections-attribution-note');
     if (!tbody) return;
 
     const entries = state.usageData.projectConnections || [];
@@ -1204,10 +1323,11 @@ function renderConnectionsAllocation() {
             emptyEl.textContent =
                 'No per-project connection breakdown for this period (grouped service-connections data unavailable).';
         }
+        if (noteEl) noteEl.style.display = 'none';
         return;
     }
 
-    const { rows } = computeProjectConnectionRows();
+    const { rows, hasBrowserByProject, hasMobileByProject } = computeProjectConnectionRows();
     const nonzero = rows.filter(r => r.connections > 0);
     if (!nonzero.length) {
         tbody.innerHTML = '';
@@ -1216,6 +1336,7 @@ function renderConnectionsAllocation() {
             emptyEl.textContent =
                 'Per-project connection peaks are zero or not attributed for this period.';
         }
+        if (noteEl) noteEl.style.display = 'none';
         return;
     }
 
@@ -1233,11 +1354,179 @@ function renderConnectionsAllocation() {
         </tr>`
         )
         .join('');
+
+    if (noteEl) {
+        const missing = [];
+        if (!hasBrowserByProject) missing.push('browser');
+        if (!hasMobileByProject) missing.push('mobile');
+        if (missing.length > 0) {
+            const missingLabel = missing.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' and ');
+            noteEl.textContent = `Share is of server connections only. ${missingLabel} stream${missing.length > 1 ? 's' : ''} cannot be broken down per project via the API — see stream sources above for org-level ${missing.join('/')} totals.`;
+            noteEl.style.display = 'block';
+        } else {
+            noteEl.style.display = 'none';
+        }
+    }
+}
+
+function computeAppConnectionRows() {
+    const isUnknownAppId = (s) => !s || String(s).toLowerCase() === 'unknown';
+
+    // Peak per app across the three by-app responses (server + browser + mobile).
+    const perApp = new Map();
+    const sources = [
+        { src: 'server', raw: state.usageData.serviceConnectionsByApp },
+        { src: 'browser', raw: state.usageData.browserStreamsByApp },
+        { src: 'mobile', raw: state.usageData.mobileStreamsByApp }
+    ];
+
+    sources.forEach(({ src, raw }) => {
+        if (!raw || !Array.isArray(raw.metadata) || raw.metadata.length === 0) return;
+        const cols = groupedUsageToColumns(raw);
+        cols.forEach(col => {
+            const rawAppId = extractSdkAppId(col.meta);
+            const key = isUnknownAppId(rawAppId) ? 'unknown' : rawAppId;
+            if (!key) return;
+            const peak = getPeakValue(col.series);
+            const cur = perApp.get(key) || { server: 0, browser: 0, mobile: 0 };
+            cur[src] = (cur[src] || 0) + peak;
+            perApp.set(key, cur);
+        });
+    });
+
+    // App → set of project keys, derived from the projectId+sdkAppId server-connections groupBy.
+    const appProjectMap = new Map();
+    const projectAppRaw = state.usageData.serviceConnectionsByProjectApp;
+    if (projectAppRaw && Array.isArray(projectAppRaw.metadata) && projectAppRaw.metadata.length > 0) {
+        const cols = groupedUsageToColumns(projectAppRaw);
+        cols.forEach(col => {
+            const rawAppId = extractSdkAppId(col.meta);
+            const appKey = isUnknownAppId(rawAppId) ? 'unknown' : rawAppId;
+            const pid = extractProjectId(col.meta);
+            const projKey = resolveProjectKeyFromId(pid);
+            if (!appKey || !projKey) return;
+            if (!appProjectMap.has(appKey)) appProjectMap.set(appKey, new Set());
+            appProjectMap.get(appKey).add(projKey);
+        });
+    }
+
+    const byKey = new Map((state.applications || []).map(a => [a.key, a]));
+
+    const rowMap = new Map();
+    perApp.forEach((bySrc, key) => {
+        const peak = (bySrc.server || 0) + (bySrc.browser || 0) + (bySrc.mobile || 0);
+        const app = byKey.get(key);
+        const isUnknown = key === 'unknown';
+        rowMap.set(key, {
+            key,
+            name: app?.name || key,
+            kind: app?.kind || (isUnknown ? '—' : '—'),
+            peak,
+            byServer: bySrc.server || 0,
+            byBrowser: bySrc.browser || 0,
+            byMobile: bySrc.mobile || 0,
+            projects: [...(appProjectMap.get(key) || [])].sort(),
+            isUnknown
+        });
+    });
+
+    // Include every registered application (zero peaks too), mirroring buildChargebackApplicationRows.
+    (state.applications || []).forEach(app => {
+        if (!rowMap.has(app.key)) {
+            rowMap.set(app.key, {
+                key: app.key,
+                name: app.name || app.key,
+                kind: app.kind || '—',
+                peak: 0,
+                byServer: 0,
+                byBrowser: 0,
+                byMobile: 0,
+                projects: [...(appProjectMap.get(app.key) || [])].sort(),
+                isUnknown: false
+            });
+        }
+    });
+
+    const totalPeak = [...rowMap.values()].reduce((s, r) => s + r.peak, 0);
+    const rows = [...rowMap.values()].map(r => ({
+        ...r,
+        share: totalPeak > 0 ? (r.peak / totalPeak) * 100 : 0
+    }));
+    rows.sort((a, b) => b.peak - a.peak || a.key.localeCompare(b.key));
+    return { rows, totalPeak };
+}
+
+function renderConnectionsByApp() {
+    const tbody = elements.connectionsByAppBody;
+    const emptyEl = elements.connectionsByAppEmpty;
+    const metaEl = elements.connectionsByAppMeta;
+    if (!tbody) return;
+
+    const hasAnyRaw = !!(state.usageData.serviceConnectionsByApp?.metadata?.length
+        || state.usageData.browserStreamsByApp?.metadata?.length
+        || state.usageData.mobileStreamsByApp?.metadata?.length);
+
+    if (!hasAnyRaw) {
+        tbody.innerHTML = '';
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.textContent =
+                'No per-application connection breakdown returned for this period. Confirm SDKs send application.id and that the groupBy=sdkAppId endpoint is available on your plan.';
+        }
+        if (metaEl) metaEl.textContent = '';
+        return;
+    }
+
+    const { rows } = computeAppConnectionRows();
+    const withConn = rows.filter(r => r.peak > 0).length;
+    if (metaEl) {
+        metaEl.textContent = rows.length
+            ? `${rows.length} registered · ${withConn} with attributed connections`
+            : '';
+    }
+
+    const hideZero = document.getElementById('hide-zero-conn-apps')?.checked;
+    const display = hideZero ? rows.filter(r => r.peak > 0) : rows;
+
+    if (!display.length) {
+        tbody.innerHTML = '';
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.textContent = hideZero && rows.length
+                ? 'No applications have attributed connections for this period. Uncheck "Hide unused" to see all registered apps.'
+                : 'No per-application connection data for this period.';
+        }
+        return;
+    }
+
+    if (emptyEl) emptyEl.style.display = 'none';
+    tbody.innerHTML = display.map(r => {
+        const rowClass = [
+            r.peak === 0 ? 'row-zero' : '',
+            r.isUnknown ? 'row-unattributed' : ''
+        ].filter(Boolean).join(' ');
+        const displayName = r.isUnknown ? 'Unattributed (no application.id)' : r.name;
+        return `
+            <tr class="${rowClass}">
+                <td><code>${escapeHtml(r.key)}</code></td>
+                <td>${escapeHtml(displayName)}</td>
+                <td>${escapeHtml(String(r.kind))}</td>
+                <td class="proj-tags-cell">${
+                    r.projects && r.projects.length
+                        ? r.projects.map(p => `<span class="proj-tag">${escapeHtml(p)}</span>`).join('')
+                        : '<span class="proj-tag-none">—</span>'
+                }</td>
+                <td class="num">${formatNumber(r.peak)}</td>
+                <td class="num">${Number(r.share).toFixed(2)}%</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function renderConnectionsPanel() {
     renderStreamSourceCards();
     renderConnectionsAllocation();
+    renderConnectionsByApp();
 }
 
 function setViewMode(mode) {
@@ -1245,11 +1534,21 @@ function setViewMode(mode) {
     try {
         localStorage.setItem('ld-billing-view-mode', mode);
     } catch (e) { /* ignore */ }
+
+    // Keep hidden tab buttons in sync
     document.querySelectorAll('.view-mode-btn').forEach(btn => {
         const active = btn.dataset.viewMode === mode;
         btn.classList.toggle('active', active);
         btn.setAttribute('aria-selected', active ? 'true' : 'false');
     });
+
+    // Reflect active mode on the summary nav cards
+    document.querySelectorAll('.summary-card[data-view-mode]').forEach(card => {
+        card.classList.remove('is-nav-active');
+    });
+    const activeCard = document.querySelector(`.summary-card[data-view-mode="${mode}"]`);
+    if (activeCard) activeCard.classList.add('is-nav-active');
+
     applyViewModeLayout();
     if (mode === 'trends') {
         requestAnimationFrame(() => {
@@ -1263,20 +1562,50 @@ function renderChargebackTables() {
     const { apps, gap, mauSdks } = state.chargeback || { apps: [], gap: [], mauSdks: null };
 
     if (elements.chargebackAppsBody) {
-        if (!apps.length) {
-            if (elements.chargebackAppsEmpty) elements.chargebackAppsEmpty.style.display = 'block';
+        const metaEl = document.getElementById('chargeback-apps-meta');
+        const hideZero = document.getElementById('hide-zero-cmau-apps')?.checked;
+        const withUsage = apps.filter(r => r.peak > 0).length;
+
+        if (metaEl) {
+            metaEl.textContent = apps.length
+                ? `${apps.length} registered · ${withUsage} with attributed cMAU`
+                : '';
+        }
+
+        const displayApps = hideZero ? apps.filter(r => r.peak > 0) : apps;
+
+        if (!displayApps.length) {
+            if (elements.chargebackAppsEmpty) {
+                elements.chargebackAppsEmpty.style.display = 'block';
+                elements.chargebackAppsEmpty.textContent = hideZero && apps.length
+                    ? 'No applications have attributed cMAU for this period. Uncheck "Hide unused" to see all registered apps.'
+                    : 'No application-level cMAU data for this period. Confirm SDKs send application.id and that the groupBy endpoint is available on your plan.';
+            }
             elements.chargebackAppsBody.innerHTML = '';
         } else {
             if (elements.chargebackAppsEmpty) elements.chargebackAppsEmpty.style.display = 'none';
-            elements.chargebackAppsBody.innerHTML = apps.map(r => `
-                <tr>
+            elements.chargebackAppsBody.innerHTML = displayApps.map(r => {
+                const isUnattributed = r.key === 'unknown';
+                const rowClass = [
+                    r.peak === 0 ? 'row-zero' : '',
+                    isUnattributed ? 'row-unattributed' : ''
+                ].filter(Boolean).join(' ');
+                const displayName = isUnattributed ? 'Unattributed (no application.id)' : r.name;
+                return `
+                <tr class="${rowClass}">
                     <td><code>${escapeHtml(r.key)}</code></td>
-                    <td>${escapeHtml(r.name)}</td>
+                    <td>${escapeHtml(displayName)}</td>
                     <td>${escapeHtml(String(r.kind))}</td>
+                    <td class="proj-tags-cell">${
+                        r.projects && r.projects.length
+                            ? r.projects.map(p => `<span class="proj-tag">${escapeHtml(p)}</span>`).join('')
+                            : '<span class="proj-tag-none">—</span>'
+                    }</td>
                     <td class="num">${formatNumber(r.peak)}</td>
                     <td class="num">${Number(r.share).toFixed(2)}%</td>
                 </tr>
-            `).join('');
+            `;
+            }).join('');
         }
     }
 
@@ -1393,7 +1722,6 @@ function updateSummaryCards() {
             const series = extractTimeSeriesData(streamData);
             const peak = series.reduce((max, point) => Math.max(max, point.value), 0);
             totalConnections += peak;
-            console.log(`Stream ${source}:`, { peak, seriesLength: series.length, sampleData: series.slice(0, 3), rawData: streamData });
         } else {
             console.warn(`No stream data for ${source}`);
         }
@@ -1408,11 +1736,64 @@ function updateSummaryCards() {
     elements.totalExperiments.textContent = formatNumber(totalExperiments);
     elements.experimentsPeriod.textContent = periodText;
     
-    // Projects count (with usage data if available)
-    const projectCount = state.usageData.projectMau && state.usageData.projectMau.length > 0
-        ? state.usageData.projectMau.length
-        : state.projects.length;
-    elements.totalProjects.textContent = formatNumber(projectCount);
+    // Capacity card: when a contracted limit is set for either dimension, show BOTH percentages
+    // side-by-side. Falls back to project count when neither limit is configured so the card
+    // still has signal pre-configuration.
+    const cap = computeCapacitySummary();
+    const valueEl = elements.totalCapacity || elements.totalProjects;
+    const subtitleEl = elements.capacityCardSubtitle;
+    if (valueEl) {
+        if (cap.cmauPct === null && cap.connPct === null) {
+            const projectCount = state.usageData.projectMau && state.usageData.projectMau.length > 0
+                ? state.usageData.projectMau.length
+                : state.projects.length;
+            valueEl.textContent = formatNumber(projectCount);
+            if (subtitleEl) subtitleEl.textContent = 'Projects with usage data · set a contracted limit to track capacity';
+        } else {
+            valueEl.innerHTML = renderCapacitySplit(cap);
+            if (subtitleEl) {
+                const partial = (cap.cmauPct === null || cap.connPct === null);
+                subtitleEl.textContent = partial
+                    ? 'Set the other contracted limit to compare both dimensions'
+                    : `Utilization vs contracted limits · click for capacity panel`;
+            }
+        }
+    }
+}
+
+function renderCapacitySplit(cap) {
+    const cell = (label, pct) => {
+        if (pct === null) {
+            return `<div class="capacity-stat">
+                        <span class="capacity-stat-label">${escapeHtml(label)}</span>
+                        <span class="capacity-stat-value">—</span>
+                    </div>`;
+        }
+        const cls = pct >= 90 ? 'is-danger' : (pct >= 70 ? 'is-warn' : '');
+        return `<div class="capacity-stat">
+                    <span class="capacity-stat-label">${escapeHtml(label)}</span>
+                    <span class="capacity-stat-value ${cls}">${pct.toFixed(1)}%</span>
+                </div>`;
+    };
+    return `
+        <div class="capacity-split">
+            ${cell('cMAU', cap.cmauPct)}
+            <div class="capacity-stat-divider"></div>
+            ${cell('Conn', cap.connPct)}
+        </div>
+    `;
+}
+
+function computeCapacitySummary() {
+    const peakCmau = getTotalCmauPeak();
+    const peakConn = getTotalConnectionsPeak();
+    const limCmau = parseFloat(elements.capacityCmauLimit?.value);
+    const limConn = parseFloat(elements.capacityConnLimit?.value);
+
+    const cmauPct = Number.isFinite(limCmau) && limCmau > 0 ? (peakCmau / limCmau) * 100 : null;
+    const connPct = Number.isFinite(limConn) && limConn > 0 ? (peakConn / limConn) * 100 : null;
+
+    return { cmauPct, connPct };
 }
 
 /**
@@ -1489,22 +1870,9 @@ function transformProjectGroupResponse(usageData) {
         return [];
     }
 
-    console.log('Processing grouped response:', {
-        metadataCount: usageData.metadata.length,
-        seriesCount: usageData.series.length,
-        sampleMetadata: usageData.metadata[0],
-        sampleSeries: usageData.series[0],
-        allMetadata: usageData.metadata,
-        projectsInState: state.projects.length,
-        projectKeys: state.projects.map(p => p.key),
-        fullMetadata: JSON.stringify(usageData.metadata, null, 2),
-        firstSeriesPoint: JSON.stringify(usageData.series[0], null, 2)
-    });
-
     const columns = usageData.metadata.map((meta, idx) => {
         const info = deriveMetadataLabel(meta);
-        console.log(`Metadata ${idx}:`, { meta, derived: info });
-        
+
         // Skip if deriveMetadataLabel returned null (invalid metadata)
         if (!info) {
             console.warn(`Skipping metadata ${idx} - could not derive project info`, meta);
@@ -1750,6 +2118,25 @@ function getPeakValue(series = []) {
 }
 
 /**
+ * Return the billing-correct value from a time series array based on aggregation type.
+ *
+ * daily_incremental: sum all points — the API returns per-day counts, so summing
+ * gives the total over the selected period.
+ *
+ * rolling_30d / month_to_date: use peak (max) — the grouped clientside-mau endpoint
+ * returns a daily series even for these types, so "last value" often lands on a
+ * low-activity day and understates the window. Peak is a safer approximation and
+ * matches the pre-existing behaviour of getPeakValue.
+ */
+function getSeriesValue(series, aggregationType) {
+    if (!Array.isArray(series) || series.length === 0) return 0;
+    if (aggregationType === 'daily_incremental') {
+        return series.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+    }
+    return getPeakValue(series);
+}
+
+/**
  * Update charts
  */
 function updateCharts() {
@@ -1785,195 +2172,235 @@ function getChartConfig(type, label, color, data) {
 }
 
 /**
- * Update Client MAU chart
+ * Build a Chart.js dataset from a series of {date, value}.
+ */
+function lineDataset(label, color, series, opts = {}) {
+    const data = series.map(p => ({
+        x: p.date instanceof Date ? p.date : new Date(p.date),
+        y: Number(p.value) || 0
+    })).filter(d => !isNaN(d.x.getTime()) && !isNaN(d.y));
+    return {
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: opts.fill ? `${color}33` : color,
+        borderWidth: opts.borderWidth ?? 2,
+        borderDash: opts.dashed ? [6, 4] : undefined,
+        tension: opts.stepped ? 0 : 0.3,
+        stepped: opts.stepped ? 'before' : false,
+        fill: !!opts.fill,
+        pointRadius: data.length > 60 ? 0 : (opts.pointRadius ?? 3),
+        pointHoverRadius: opts.pointHoverRadius ?? 5
+    };
+}
+
+/**
+ * Build a horizontal reference line dataset spanning the same x-axis as the source series.
+ */
+function horizontalLineDataset(label, color, yValue, refSeries) {
+    if (!refSeries || refSeries.length === 0) return null;
+    const sorted = [...refSeries].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const first = sorted[0].date instanceof Date ? sorted[0].date : new Date(sorted[0].date);
+    const last = sorted[sorted.length - 1].date instanceof Date
+        ? sorted[sorted.length - 1].date
+        : new Date(sorted[sorted.length - 1].date);
+    return {
+        label,
+        data: [{ x: first, y: yValue }, { x: last, y: yValue }],
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.5,
+        borderDash: [4, 4],
+        tension: 0,
+        fill: false,
+        pointRadius: 0,
+        pointHoverRadius: 0
+    };
+}
+
+/**
+ * Compute a running max series over a time-ordered array of {date, value}.
+ */
+function runningMaxSeries(series) {
+    const sorted = [...series].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let max = 0;
+    return sorted.map(p => {
+        max = Math.max(max, Number(p.value) || 0);
+        return { date: p.date, value: max };
+    });
+}
+
+/**
+ * Compute a running sum series over a time-ordered array of {date, value}.
+ */
+function runningSumSeries(series) {
+    const sorted = [...series].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let sum = 0;
+    return sorted.map(p => {
+        sum += Number(p.value) || 0;
+        return { date: p.date, value: sum };
+    });
+}
+
+/**
+ * Append contracted-limit + 70%/90% reference-line datasets, if a limit is set.
+ */
+function appendThresholdDatasets(datasets, limitInputEl, refSeries, labels = {}) {
+    const limit = parseFloat(limitInputEl?.value);
+    if (!Number.isFinite(limit) || limit <= 0) return;
+    const contractedLabel = labels.contracted || 'Contracted limit';
+    const warn = horizontalLineDataset(`${contractedLabel}`, '#FF35A2', limit, refSeries);
+    const t90 = horizontalLineDataset('90% threshold', '#FF9D29', limit * 0.9, refSeries);
+    const t70 = horizontalLineDataset('70% threshold', '#EBFF38', limit * 0.7, refSeries);
+    [warn, t90, t70].forEach(ds => { if (ds) datasets.push(ds); });
+}
+
+/**
+ * Shared chart options (time axis + dark tooltip styling).
+ */
+function timeSeriesChartOptions(yLabelPrefix) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+            legend: { display: true, labels: { color: '#8B91B5' } },
+            tooltip: {
+                backgroundColor: '#171B35',
+                titleColor: '#F0F2FF',
+                bodyColor: '#F0F2FF',
+                borderColor: '#252A4A',
+                borderWidth: 1,
+                padding: 12,
+                callbacks: {
+                    title: (items) => {
+                        const value = items[0].parsed.x;
+                        return formatDate(value instanceof Date ? value : new Date(value));
+                    },
+                    label: (item) => `${item.dataset.label}: ${formatNumber(item.parsed.y)}`
+                }
+            }
+        },
+        scales: {
+            x: {
+                type: 'time',
+                time: { unit: 'day', displayFormats: { day: 'MMM d' } },
+                grid: { color: '#1A1F3C', drawBorder: false },
+                ticks: { color: '#8B91B5', maxTicksLimit: 10 }
+            },
+            y: {
+                beginAtZero: true,
+                grid: { color: '#1A1F3C', drawBorder: false },
+                ticks: { color: '#8B91B5', callback: (value) => formatNumber(value) }
+            }
+        }
+    };
+}
+
+/**
+ * Update Client MAU chart.
+ *
+ * Default view: running cumulative of daily-incremental unique-user counts. This is an
+ * approximation — users active across multiple days are counted on each day — and is
+ * NOT the same as LD's billed cMAU (which is the rolling-30-day peak). We expose the
+ * billed series as a secondary line so the gap is visible.
+ *
+ * If daily_incremental data isn't available (API failure), fall back to the rolling-30-day
+ * series we already have on state.usageData.mau so the chart still has signal.
  */
 function updateCmauChart() {
     const chartType = elements.cmauChartType.value;
-    let mauData = extractTimeSeriesData(state.usageData.mau);
-    
-    // If no direct MAU data, aggregate from projects
-    if (mauData.length === 0 && state.usageData.projectMau) {
+
+    // Primary: cumulative running sum of daily-incremental cMAU.
+    const dailyIncrementalSeries = extractTimeSeriesData(state.usageData.mauDailyIncremental);
+    const dailyByDay = dailyIncrementalSeries.length ? aggregateByDay(dailyIncrementalSeries) : [];
+    const cumulativeSeries = dailyByDay.length ? runningSumSeries(dailyByDay) : [];
+
+    // Secondary: the rolling-30-day series (or fallback when daily incremental missing).
+    let rollingSeries = extractTimeSeriesData(state.usageData.mau);
+    if (rollingSeries.length === 0 && state.usageData.projectMau) {
         const allProjectData = [];
         state.usageData.projectMau.forEach(proj => {
             const projData = proj.series || extractTimeSeriesData(proj.data);
             allProjectData.push(...projData);
         });
-        mauData = aggregateByDay(allProjectData);
+        rollingSeries = aggregateByDay(allProjectData);
+    } else {
+        rollingSeries = aggregateByDay(rollingSeries);
     }
-    
-    // Destroy existing chart
+
     if (state.charts.cmau) {
         state.charts.cmau.destroy();
     }
-    
-    if (mauData.length === 0) {
-        // No data available
-        return;
+
+    if (cumulativeSeries.length === 0 && rollingSeries.length === 0) return;
+
+    const datasets = [];
+    let refSeries = cumulativeSeries.length ? cumulativeSeries : rollingSeries;
+
+    if (cumulativeSeries.length) {
+        datasets.push(lineDataset('Cumulative unique users (approx)', '#405BFF', cumulativeSeries, {
+            fill: chartType === 'area'
+        }));
     }
-    
+    if (rollingSeries.length) {
+        // Secondary line: show the billed metric for comparison.
+        datasets.push(lineDataset('Rolling 30-day cMAU (billed)', '#7084FF', rollingSeries, {
+            dashed: true
+        }));
+    }
+    appendThresholdDatasets(datasets, elements.capacityCmauLimit, refSeries, { contracted: 'Contracted cMAU' });
+
     const ctx = elements.cmauChart.getContext('2d');
-    const config = getChartConfig(chartType, 'Client MAU', '#00d4aa', mauData);
-    
     state.charts.cmau = new Chart(ctx, {
-        type: chartType === 'area' ? 'line' : chartType,
-        data: config,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    backgroundColor: '#1a222c',
-                    titleColor: '#e6edf3',
-                    bodyColor: '#e6edf3',
-                    borderColor: '#30363d',
-                    borderWidth: 1,
-                    padding: 12,
-                    displayColors: false,
-                    callbacks: {
-                        title: (items) => {
-                            const value = items[0].parsed.x;
-                            if (value instanceof Date) {
-                                return formatDate(value);
-                            }
-                            return formatDate(new Date(value));
-                        },
-                        label: (item) => `MAU: ${formatNumber(item.parsed.y)}`
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: 'day',
-                        displayFormats: {
-                            day: 'MMM d'
-                        }
-                    },
-                    grid: {
-                        color: '#21262d',
-                        drawBorder: false
-                    },
-                    ticks: {
-                        color: '#8b949e',
-                        maxTicksLimit: 10
-                    }
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: {
-                        color: '#21262d',
-                        drawBorder: false
-                    },
-                    ticks: {
-                        color: '#8b949e',
-                        callback: (value) => formatNumber(value)
-                    }
-                }
-            }
-        }
+        type: chartType === 'area' ? 'line' : (chartType === 'bar' ? 'bar' : 'line'),
+        data: { datasets },
+        options: timeSeriesChartOptions()
     });
 }
 
 /**
- * Update Connections chart
+ * Update Connections chart.
+ *
+ * Two lines:
+ * - Daily peak (across server + browser + mobile streams) — shows variance day-to-day.
+ * - Period peak (billing reference) — running max from period start; this is what LD bills on.
+ *
+ * Optional threshold overlays when a contracted connections limit is set.
  */
 function updateConnectionsChart() {
     const chartType = elements.connectionsChartType.value;
-    
-    // Combine all stream sources
+
     const allStreamData = [];
     ['server', 'browser', 'mobile'].forEach(source => {
         const sourceData = extractTimeSeriesData(state.usageData.streams[source]);
         allStreamData.push(...sourceData);
     });
-    
-    const aggregatedData = aggregateByDay(allStreamData);
-    
-    // Destroy existing chart
+    const dailyPeak = aggregateByDay(allStreamData);
+
     if (state.charts.connections) {
         state.charts.connections.destroy();
     }
-    
-    if (aggregatedData.length === 0) {
-        return;
-    }
-    
+    if (dailyPeak.length === 0) return;
+
+    const runningMax = runningMaxSeries(dailyPeak);
+
+    const datasets = [
+        lineDataset('Daily peak', '#A34FDE', dailyPeak, {
+            fill: chartType === 'area'
+        }),
+        lineDataset('Period peak (billing reference)', '#FF9D29', runningMax, {
+            stepped: true,
+            dashed: true
+        })
+    ];
+    appendThresholdDatasets(datasets, elements.capacityConnLimit, runningMax, { contracted: 'Contracted connections' });
+
     const ctx = elements.connectionsChart.getContext('2d');
-    const config = getChartConfig(chartType, 'Service Connections', '#7c3aed', aggregatedData);
-    
     state.charts.connections = new Chart(ctx, {
-        type: chartType === 'area' ? 'line' : chartType,
-        data: config,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    backgroundColor: '#1a222c',
-                    titleColor: '#e6edf3',
-                    bodyColor: '#e6edf3',
-                    borderColor: '#30363d',
-                    borderWidth: 1,
-                    padding: 12,
-                    displayColors: false,
-                    callbacks: {
-                        title: (items) => {
-                            const value = items[0].parsed.x;
-                            if (value instanceof Date) {
-                                return formatDate(value);
-                            }
-                            return formatDate(new Date(value));
-                        },
-                        label: (item) => `Connections: ${formatNumber(item.parsed.y)}`
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: 'day',
-                        displayFormats: {
-                            day: 'MMM d'
-                        }
-                    },
-                    grid: {
-                        color: '#21262d',
-                        drawBorder: false
-                    },
-                    ticks: {
-                        color: '#8b949e',
-                        maxTicksLimit: 10
-                    }
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: {
-                        color: '#21262d',
-                        drawBorder: false
-                    },
-                    ticks: {
-                        color: '#8b949e',
-                        callback: (value) => formatNumber(value)
-                    }
-                }
-            }
-        }
+        type: chartType === 'area' ? 'line' : (chartType === 'bar' ? 'bar' : 'line'),
+        data: { datasets },
+        options: timeSeriesChartOptions()
     });
 }
 
@@ -2016,13 +2443,7 @@ function updateProjectGrid() {
             mau: getPeakValue(series)
         });
     });
-    
-    console.log('Usage map after filtering:', {
-        size: usageMap.size,
-        keys: Array.from(usageMap.keys()),
-        entries: Array.from(usageMap.entries()).map(([k, v]) => ({ key: k, mau: v.mau }))
-    });
-    
+
     const { rows: connRows } = computeProjectConnectionRows();
     const connectionsMap = new Map(connRows.map(r => [r.key, { connections: r.connections }]));
     
@@ -2045,12 +2466,8 @@ function updateProjectGrid() {
             );
         }
         
-        // Only use the usage if we found an exact match - don't fall back to aggregated totals
         const mau = (usage && usage.projectKey === project.key) ? usage.mau : 0;
-        
-        // Get connections for this project
         const connections = connectionsMap.get(project.key)?.connections || 0;
-        
         return {
             key: project.key,
             name: project.name || project.key,
@@ -2059,14 +2476,7 @@ function updateProjectGrid() {
         };
     });
     
-    console.log('Project grid update:', {
-        totalProjects: state.projects.length,
-        usageEntries: usageEntries.length,
-        usageMapSize: usageMap.size,
-        projectDataCount: projectData.length
-    });
-
-    // Add any usage entries that don't match existing projects (shouldn't happen, but be safe)
+    // Add any usage entries that don't match existing projects
     usageMap.forEach(entry => {
         if (entry.projectKey && entry.projectKey !== 'series' && !entry.projectKey.includes('Context:')) {
             if (!projectData.some(project => 
@@ -2269,6 +2679,30 @@ function exportChargebackGapCsv() {
     downloadTextFile(lines, `ld-chargeback-gap-${formatDateForInput(new Date())}.csv`);
 }
 
+function exportConnectionsByAppCsv() {
+    const { rows } = computeAppConnectionRows();
+    if (!rows.length) {
+        showError('No per-application connection rows to export.');
+        return;
+    }
+    const header = ['applicationKey', 'name', 'kind', 'peakConnections', 'serverPeak', 'browserPeak', 'mobilePeak', 'sharePercentOrg', 'projects'];
+    const lines = [
+        header.join(','),
+        ...rows.map(r => [
+            `"${String(r.key).replace(/"/g, '""')}"`,
+            `"${String(r.name).replace(/"/g, '""')}"`,
+            `"${String(r.kind).replace(/"/g, '""')}"`,
+            r.peak,
+            r.byServer,
+            r.byBrowser,
+            r.byMobile,
+            r.share.toFixed(4),
+            `"${(r.projects || []).join('|').replace(/"/g, '""')}"`
+        ].join(','))
+    ].join('\n');
+    downloadTextFile(lines, `ld-connections-by-app-${formatDateForInput(new Date())}.csv`);
+}
+
 function downloadTextFile(content, filename) {
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -2290,8 +2724,22 @@ function downloadTextFile(content, filename) {
  * Initialize event listeners
  */
 function initEventListeners() {
-    // Bind each tab directly: clicks can target a text node inside the button; text nodes
-    // have no .closest(), so delegation on .view-mode-toggle often fails silently or throws.
+    // Summary cards as primary navigation
+    document.querySelectorAll('.summary-card[data-view-mode]').forEach(card => {
+        card.addEventListener('click', () => {
+            const mode = card.getAttribute('data-view-mode');
+            if (mode) setViewMode(mode);
+        });
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const mode = card.getAttribute('data-view-mode');
+                if (mode) setViewMode(mode);
+            }
+        });
+    });
+
+    // Keep hidden tab buttons wired up (used internally for capacity access)
     document.querySelectorAll('.view-mode-btn').forEach(btn => {
         btn.addEventListener('click', e => {
             e.preventDefault();
@@ -2306,12 +2754,24 @@ function initEventListeners() {
             localStorage.setItem('ld-billing-cap-conn', elements.capacityConnLimit?.value || '');
         } catch (e) { /* ignore */ }
         updateCapacityMeters();
+        updateSummaryCards();
+        // Refresh charts so threshold overlay lines update immediately.
+        if (typeof updateCharts === 'function') updateCharts();
     };
     elements.capacityCmauLimit?.addEventListener('input', persistCap);
     elements.capacityConnLimit?.addEventListener('input', persistCap);
 
     elements.exportChargebackApps?.addEventListener('click', exportChargebackAppsCsv);
     elements.exportChargebackGap?.addEventListener('click', exportChargebackGapCsv);
+    elements.exportConnectionsByApp?.addEventListener('click', exportConnectionsByAppCsv);
+
+    document.getElementById('hide-zero-cmau-apps')?.addEventListener('change', () => {
+        renderChargebackTables();
+    });
+
+    document.getElementById('hide-zero-conn-apps')?.addEventListener('change', () => {
+        renderConnectionsByApp();
+    });
 
     // API key visibility toggle
     elements.toggleApiKey.addEventListener('click', () => {
@@ -2448,6 +2908,8 @@ function initViewModeAndCapacity() {
             btn.classList.toggle('active', active);
             btn.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+        const activeCard = document.querySelector(`.summary-card[data-view-mode="${saved}"]`);
+        if (activeCard) activeCard.classList.add('is-nav-active');
     }
     applyViewModeLayout();
     updateViewModeStatus();
