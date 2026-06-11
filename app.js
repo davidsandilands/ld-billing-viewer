@@ -983,7 +983,8 @@ async function fetchAllUsageData() {
             serviceConnectionsByProjectApp,
             browserStreamsByApp,
             mobileStreamsByApp,
-            mauDailyIncrementalRaw
+            mauDailyIncrementalRaw,
+            mauBilledRaw
         ] = await Promise.all([
             fetchServiceConnections(start, end),
             fetchServiceConnections(start, end, true),
@@ -998,21 +999,26 @@ async function fetchAllUsageData() {
                 return [];
             }),
             fetchMauSdksUsage(start, end),
+            // Chargeback fetches use daily_incremental ALWAYS — we want a strict-period total
+            // (sum of daily unique counts across the selected date range), regardless of which
+            // Aggregation Window the user has selected for the Trends view. Caveat: users active
+            // on multiple days are counted on each (the share / gap math still reconciles
+            // because all four chargeback fetches use the same basis).
             fetchClientsideMauGrouped(start, end, ['sdkAppId'], {
                 contextKinds: chargebackContexts,
-                aggregationTypeUi: aggregationType
+                aggregationTypeUi: 'daily_incremental'
             }).catch(() => null),
             fetchClientsideMauGrouped(start, end, ['projectId', 'environmentId'], {
                 contextKinds: chargebackContexts,
-                aggregationTypeUi: aggregationType
+                aggregationTypeUi: 'daily_incremental'
             }).catch(() => null),
             fetchClientsideMauGrouped(start, end, ['projectId', 'environmentId', 'sdkAppId'], {
                 contextKinds: chargebackContexts,
-                aggregationTypeUi: aggregationType
+                aggregationTypeUi: 'daily_incremental'
             }).catch(() => null),
             fetchClientsideMauUsage(start, end, {
                 contextKinds: chargebackContexts,
-                aggregationType
+                aggregationType: 'daily_incremental'
             }).catch(() => ({ metadata: [], series: [] })),
             fetchServiceConnectionsBy('sdkAppId', start, end),
             fetchServiceConnectionsBy('projectId,sdkAppId', start, end),
@@ -1021,6 +1027,13 @@ async function fetchAllUsageData() {
             fetchClientsideMauUsage(start, end, {
                 contextKinds,
                 aggregationType: 'daily_incremental'
+            }).catch(() => null),
+            // Billed cMAU: unfiltered + rolling 30-day. This is what LD invoices on.
+            // Always fetched independently of the user's Aggregation Window / Context-kind selections
+            // so the summary card always shows the contracted figure.
+            fetchClientsideMauUsage(start, end, {
+                contextKinds: [],
+                aggregationType: 'rolling_30d'
             }).catch(() => null)
         ]);
             
@@ -1031,10 +1044,13 @@ async function fetchAllUsageData() {
         const tripleColData = groupedUsageToColumns(tripleRaw);
         const appProjectMap = buildAppProjectMap(tripleColData);
         const cmauTSeries = extractTimeSeriesData(cmauChargebackTotalRaw);
-        const orgCmauChargeback = getSeriesValue(cmauTSeries, aggregationType);
+        // Chargeback math always uses daily_incremental summing (period total), regardless of
+        // the user's Aggregation Window selector. See the chargeback fetches above.
+        const chargebackAgg = 'daily_incremental';
+        const orgCmauChargeback = getSeriesValue(cmauTSeries, chargebackAgg);
         state.chargeback = {
-            apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback, aggregationType, appProjectMap),
-            gap: buildGapRows(groupedUsageToColumns(envPairRaw), tripleColData, aggregationType),
+            apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback, chargebackAgg, appProjectMap),
+            gap: buildGapRows(groupedUsageToColumns(envPairRaw), tripleColData, chargebackAgg),
             mauSdks: mauSdksRaw,
             orgCmauTotal: orgCmauChargeback
         };
@@ -1142,6 +1158,11 @@ async function fetchAllUsageData() {
         // Daily-incremental cMAU series used for the "cumulative unique users (approx)" chart line.
         // Independent of the user's selected chargeback aggregation so the chart always has a stable basis.
         state.usageData.mauDailyIncremental = mauDailyIncrementalRaw;
+
+        // Billed cMAU: unfiltered rolling 30-day series. Drives the headline summary card and the
+        // chart's "Rolling 30-day cMAU (billed)" reference line. Decoupled from user filters so
+        // it always reflects what LD invoices on.
+        state.usageData.mauBilled = mauBilledRaw;
         
         // Store experimentation data
         state.usageData.experiments = experimentationKeys;
@@ -1709,10 +1730,16 @@ function updateSummaryCards() {
     const { start, end } = state.dateRange;
     const periodText = `${formatDate(start)} - ${formatDate(end)}`;
 
-    const mauSeries = extractTimeSeriesData(state.usageData.mau);
-    const totalMau = mauSeries.reduce((max, point) => Math.max(max, point.value), 0);
+    // Billed cMAU = peak of the unfiltered rolling-30-day series. Falls back to the user-filtered
+    // series only if the dedicated billed fetch wasn't available.
+    const billedSeries = extractTimeSeriesData(state.usageData.mauBilled);
+    const filteredSeries = extractTimeSeriesData(state.usageData.mau);
+    const sourceSeries = billedSeries.length ? billedSeries : filteredSeries;
+    const totalMau = sourceSeries.reduce((max, point) => Math.max(max, point.value), 0);
     elements.totalCmau.textContent = formatNumber(totalMau);
-    elements.cmauPeriod.textContent = periodText;
+    elements.cmauPeriod.textContent = billedSeries.length
+        ? 'Peak rolling 30-day · billed cMAU'
+        : 'Peak rolling 30-day · (filtered fallback)';
 
     // Calculate total connections
     let totalConnections = 0;
@@ -2316,8 +2343,12 @@ function updateCmauChart() {
     const dailyByDay = dailyIncrementalSeries.length ? aggregateByDay(dailyIncrementalSeries) : [];
     const cumulativeSeries = dailyByDay.length ? runningSumSeries(dailyByDay) : [];
 
-    // Secondary: the rolling-30-day series (or fallback when daily incremental missing).
-    let rollingSeries = extractTimeSeriesData(state.usageData.mau);
+    // Secondary: the unfiltered billed rolling-30-day series. Falls back to the user-filtered
+    // mau series, then to per-project aggregates if neither is available.
+    let rollingSeries = extractTimeSeriesData(state.usageData.mauBilled);
+    if (rollingSeries.length === 0) {
+        rollingSeries = extractTimeSeriesData(state.usageData.mau);
+    }
     if (rollingSeries.length === 0 && state.usageData.projectMau) {
         const allProjectData = [];
         state.usageData.projectMau.forEach(proj => {

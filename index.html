@@ -266,7 +266,7 @@
                     <div class="section-header">
                         <div>
                             <h3>cMAU by application</h3>
-                            <p class="section-sub">All registered applications. Cost share ≈ application cMAU ÷ org total for the same window. SDKs must send <code>application.id</code> at init for attribution.</p>
+                            <p class="section-sub">All registered applications. Cost share &asymp; application cMAU &divide; org total for the selected period. <strong>Period total</strong>: sum of daily unique-user counts within your date range (caveat: users active on multiple days are counted on each). Independent of the Aggregation Window selector. SDKs must send <code>application.id</code> at init for attribution.</p>
                             <p id="chargeback-apps-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
                         </div>
                         <div class="section-header-actions">
@@ -587,7 +587,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=13"></script>
 </body>
 </html>
 
