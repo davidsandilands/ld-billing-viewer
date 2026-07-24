@@ -1,5 +1,7 @@
 # LaunchDarkly Billing Viewer
 
+> ⚠️ **Not an official or supported LaunchDarkly project.** This is a community tool under **active development and testing**. Behaviour and numbers may change, and figures should be independently verified against LaunchDarkly before you rely on them for billing or chargeback.
+
 A browser-based dashboard — **plus a headless export script** — for LaunchDarkly usage and chargeback: billed cMAU, service connections, context-kind allocation, and capacity/run-rate planning, broken down by **application** and **project**.
 
 > Two ways to use it: the **web app** (`index.html`, zero-build static site) for interactive exploration, or **`ld-export.mjs`** (Node 18+, no dependencies) to pull the same datasets to CSV/JSON headlessly. See [Headless export](#headless-export-ld-exportmjs).
@@ -190,10 +192,15 @@ Every chart and table has its own **Export CSV** button (charts export the exact
 
 ## Security Notes
 
-- **API tokens are not stored** - You must re-enter your token each session
-- **Browser-only requests** - All API calls are made directly from your browser to LaunchDarkly
-- **No backend required** - No data passes through any third-party servers
-- **Use read-only tokens** - For maximum security, create tokens with Reader role only
+> ⚠️ **Token-in-browser caveat.** The web app asks you to paste an access token into the page. It is never stored and requests go straight to LaunchDarkly — but **LaunchDarkly explicitly advises against putting access tokens in client-side JavaScript** (the token is exposed to the page, browser extensions, etc.). Choose based on your risk tolerance:
+>
+> - **Safer (recommended for automation / shared use):** use the [`ld-export.mjs`](#headless-export-ld-exportmjs) script with a **service-account token in an environment variable** — the token never touches a web page.
+> - **Acceptable for personal / internal use:** a **Reader** token pasted into a **local, private** browser session, understanding the risk. Don't use the hosted (GitHub Pages) instance with a production or write-scoped token.
+
+- **API tokens are not stored** - you must re-enter your token each session; nothing is persisted to `localStorage` or a backend
+- **Browser-only requests** - all API calls go directly from your browser to LaunchDarkly; no data passes through any third-party servers
+- **Use read-only tokens** - always create tokens with the **Reader** role; rotate them on your normal credential cycle
+- **Prefer the script for anything non-interactive** - keep tokens in env vars, not in a page
 
 ## Limitations
 

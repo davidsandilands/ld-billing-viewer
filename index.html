@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=25">
+    <link rel="stylesheet" href="styles.css?v=27">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -13,6 +13,10 @@
 </head>
 <body>
     <div class="app-container">
+        <!-- Disclaimer: not an official/supported LD product -->
+        <div class="dev-disclaimer" role="note">
+            ⚠ <strong>Not an official or supported LaunchDarkly product.</strong> Community tool under active development and testing — verify figures against LaunchDarkly before relying on them.
+        </div>
         <!-- Header -->
         <header class="app-header">
             <div class="logo-section">
@@ -83,6 +87,7 @@
                                 </button>
                             </div>
                             <span class="helper-text">Read-only token recommended. <a href="https://app.launchdarkly.com/settings/authorization" target="_blank">Get token</a></span>
+                            <p class="token-security-note">⚠ LaunchDarkly advises against putting access tokens in client-side apps. The token isn't stored and calls go straight to LaunchDarkly, but it does live in this browser session — use a <strong>Reader</strong> token in a local/private session only. For automation, prefer the <code>ld-export.mjs</code> script with a service token in an environment variable.</p>
                         </div>
 
                         <div class="form-group">
