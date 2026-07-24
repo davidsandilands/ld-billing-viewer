@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=24">
+    <link rel="stylesheet" href="styles.css?v=25">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -261,31 +261,34 @@
                     </button>
                 </div>
 
-                <!-- Block 1 — Billing: cMAU by application (primary context) -->
+                <!-- Block 1 — Billing: cMAU by application / project (primary context) -->
                 <div id="chargeback-apps-section" class="chargeback-section">
                     <div class="section-header">
                         <div>
-                            <h3>cMAU billing by application <span class="section-tag">primary context</span></h3>
-                            <p class="section-sub">Month-to-date billed cMAU per application <strong>as reported by LD on the snapshot day</strong> (<span id="chargeback-snapshot-day">&mdash;</span>). Primary context kind only — cannot de-duplicate across kinds. Cost share &asymp; app cMAU &divide; org cMAU. SDKs must send <code>application.id</code> at init.</p>
+                            <h3>cMAU billing by <span id="chargeback-billing-entity-word">application</span> <span class="section-tag">primary context</span></h3>
+                            <p class="section-sub">Month-to-date billed cMAU per <span id="chargeback-billing-entity-word-2">application</span> <strong>as reported by LD on the snapshot day</strong> (<span id="chargeback-snapshot-day">&mdash;</span>). Primary context kind only. Cost share &asymp; entity cMAU &divide; org cMAU. Application attribution needs SDKs sending <code>application.id</code>; per-project sums environment-level cMAU.</p>
                             <p id="chargeback-apps-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
                         </div>
                         <div class="section-header-actions">
-                            <label class="toggle-label" title="Show only applications with attributed cMAU">
+                            <div class="chargeback-dim-toggle" id="chargeback-billing-dim-toggle" role="group" aria-label="Billing dimension">
+                                <button type="button" class="cb-dim-btn active" data-cb-billing-dim="app" aria-pressed="true">By application</button>
+                                <button type="button" class="cb-dim-btn" data-cb-billing-dim="project" aria-pressed="false">By project</button>
+                            </div>
+                            <label class="toggle-label" title="Show only rows with attributed cMAU">
                                 <input type="checkbox" id="hide-zero-cmau-apps">
                                 <span>Hide unused</span>
                             </label>
                             <button type="button" id="export-chargeback-apps" class="btn secondary small">Export CSV</button>
                         </div>
                     </div>
-                    <p class="dedup-warning">⚠ cMAU counts <strong>unique contexts</strong>. A context active in more than one application is counted in each, so per-application cMAU can sum to <strong>more than the billed org total</strong> — these are proportional allocations, not a clean de-duplicated split. The org total reconciles to the invoice; the per-app breakdown does not.</p>
+                    <p class="dedup-warning">⚠ cMAU counts <strong>unique contexts</strong>. A context active in more than one application (or project) is counted in each, so per-entity cMAU can sum to <strong>more than the billed org total</strong> — these are proportional allocations, not a clean de-duplicated split. The org total reconciles to the invoice; the per-entity breakdown does not.</p>
                     <div class="table-wrapper">
-                        <table class="data-table dense">
+                        <table class="data-table dense billing-dim-app" id="chargeback-billing-table">
                             <thead>
                                 <tr>
-                                    <th>Application</th>
-                                    <th>Name</th>
-                                    <th>Kind</th>
-                                    <th>Projects</th>
+                                    <th id="chargeback-billing-entity-col">Application</th>
+                                    <th class="cb-billing-app-only">Kind</th>
+                                    <th class="cb-billing-app-only">Projects</th>
                                     <th class="num">cMAU</th>
                                     <th class="num">Share of org</th>
                                 </tr>
@@ -293,7 +296,7 @@
                             <tbody id="chargeback-apps-body"></tbody>
                         </table>
                     </div>
-                    <p id="chargeback-apps-empty" class="helper-inline muted" style="display:none;">No application-level cMAU for this period. Confirm SDKs send <code>application.id</code> and that grouped usage is available on your plan.</p>
+                    <p id="chargeback-apps-empty" class="helper-inline muted" style="display:none;">No cMAU for this period at this level. Applications need SDKs sending <code>application.id</code>; per-project needs environment-level usage data.</p>
                 </div>
 
                 <!-- Block 2 — Largest context kind proportional allocation -->
@@ -693,7 +696,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=44"></script>
+    <script src="app.js?v=45"></script>
 </body>
 </html>
 

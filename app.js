@@ -19,6 +19,7 @@ const state = {
     capacityGroup: 'app',
     chargebackView: 'billing',
     chargebackDim: 'app',
+    chargebackBillingDim: 'app',
     usageData: {
         mau: [],
         streams: [],
@@ -102,6 +103,9 @@ const elements = {
     chargebackGapEmpty: document.getElementById('chargeback-gap-empty'),
     chargebackSdksEmpty: document.getElementById('chargeback-sdks-empty'),
     chargebackKindNote: document.getElementById('chargeback-kind-note'),
+    chargebackBillingEntityWord: document.getElementById('chargeback-billing-entity-word'),
+    chargebackBillingEntityWord2: document.getElementById('chargeback-billing-entity-word-2'),
+    chargebackBillingEntityCol: document.getElementById('chargeback-billing-entity-col'),
     chargebackLargestkindBody: document.getElementById('chargeback-largestkind-body'),
     chargebackLargestkindEmpty: document.getElementById('chargeback-largestkind-empty'),
     chargebackLkTitle: document.getElementById('chargeback-lk-title'),
@@ -721,6 +725,36 @@ function buildChargebackApplicationRows(columnEntries, applications, orgCmauTota
     return rows;
 }
 
+/**
+ * Per-project billed cMAU for the chargeback billing table's "By project" view. Summed from the
+ * (projectId × environmentId) columns — projectId-alone grouping collapses on most plans, but the
+ * env-pair grouping works and summing environments gives a per-project figure. Cross-environment
+ * dedup is lost (same caveat the de-dup warning covers). Shares are vs the org cMAU snapshot.
+ */
+function buildProjectCmauRows(envPairCols, orgCmauTotal) {
+    const byProj = new Map();
+    (envPairCols || []).forEach(col => {
+        const projKey = resolveProjectKeyFromId(extractProjectId(col.meta)) || 'unknown';
+        const value = getSeriesValue(col.series, 'snapshot');
+        if (!Number.isFinite(value)) return;
+        if (!byProj.has(projKey)) {
+            const p = (state.projects || []).find(pr => pr.key === projKey);
+            byProj.set(projKey, {
+                key: projKey,
+                name: projKey === 'unknown' ? 'Unattributed' : (p?.name || projKey),
+                kind: '—',
+                peak: 0,
+                projects: []
+            });
+        }
+        byProj.get(projKey).peak += value;
+    });
+    const rows = [...byProj.values()];
+    rows.forEach(r => { r.share = orgCmauTotal > 0 ? (r.peak / orgCmauTotal) * 100 : 0; });
+    rows.sort((a, b) => b.peak - a.peak || a.key.localeCompare(b.key));
+    return rows;
+}
+
 function buildGapRows(envLevelCols, appEnvLevelCols, aggregationType = 'rolling_30d') {
     // LD's API returns unattributed cMAU as a literal sdkAppId bucket, typically "Unknown" (capital U)
     // but case can vary; match leniently.
@@ -1313,6 +1347,7 @@ async function fetchAllUsageData() {
         const orgCmauChargeback = getSeriesValue(cmauTSeries, chargebackAgg);
         state.chargeback = {
             apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback, chargebackAgg, appProjectMap),
+            appsByProject: buildProjectCmauRows(envPairCols, orgCmauChargeback),
             gap: buildGapRows(envPairCols, tripleColData, chargebackAgg),
             mauSdks: mauSdksRaw,
             orgCmauTotal: orgCmauChargeback,
@@ -1965,6 +2000,15 @@ function syncChargebackDimButtons(dim) {
     });
 }
 
+/** Reflect the chosen billing-table dimension on its segmented toggle. */
+function syncChargebackBillingButtons(dim) {
+    document.querySelectorAll('[data-cb-billing-dim]').forEach(btn => {
+        const active = btn.getAttribute('data-cb-billing-dim') === dim;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
 /**
  * Block 2 — the "largest context kind" proportional allocation, for the selected dimension
  * (application or project). Sourced from /usage/mau by context kind; degrades to a note (showing
@@ -2042,43 +2086,60 @@ function renderChargebackTables() {
     if (elements.chargebackSnapshotDay) elements.chargebackSnapshotDay.textContent = snapshotDay;
     if (elements.chargebackSnapshotDayGap) elements.chargebackSnapshotDayGap.textContent = snapshotDay;
 
-    // ---- Block 1: billing (primary-context cMAU by application) ----
+    // ---- Block 1: billing (primary-context cMAU), by application or project ----
     if (elements.chargebackAppsBody) {
+        const billingDim = state.chargebackBillingDim === 'project' ? 'project' : 'app';
+        const rows = billingDim === 'project' ? (state.chargeback?.appsByProject || []) : apps;
+        const noun = billingDim === 'project' ? 'project' : 'application';
+
+        syncChargebackBillingButtons(billingDim);
+        const table = document.getElementById('chargeback-billing-table');
+        if (table) {
+            table.classList.toggle('billing-dim-app', billingDim === 'app');
+            table.classList.toggle('billing-dim-project', billingDim === 'project');
+        }
+        const entityTitle = billingDim === 'project' ? 'project' : 'application';
+        if (elements.chargebackBillingEntityWord) elements.chargebackBillingEntityWord.textContent = entityTitle;
+        if (elements.chargebackBillingEntityWord2) elements.chargebackBillingEntityWord2.textContent = entityTitle;
+        if (elements.chargebackBillingEntityCol) elements.chargebackBillingEntityCol.textContent = billingDim === 'project' ? 'Project' : 'Application';
+
         const metaEl = document.getElementById('chargeback-apps-meta');
         const hideZero = document.getElementById('hide-zero-cmau-apps')?.checked;
-        const withUsage = apps.filter(r => r.peak > 0).length;
-
+        const withUsage = rows.filter(r => r.peak > 0).length;
         if (metaEl) {
-            metaEl.textContent = apps.length
-                ? `${apps.length} registered · ${withUsage} with attributed cMAU`
+            metaEl.textContent = rows.length
+                ? `${rows.length} ${noun}${rows.length === 1 ? '' : 's'} · ${withUsage} with attributed cMAU`
                 : '';
         }
 
-        const displayApps = hideZero ? apps.filter(r => r.peak > 0) : apps;
+        const displayRows = hideZero ? rows.filter(r => r.peak > 0) : rows;
 
-        if (!displayApps.length) {
+        if (!displayRows.length) {
             if (elements.chargebackAppsEmpty) {
                 elements.chargebackAppsEmpty.style.display = 'block';
-                elements.chargebackAppsEmpty.textContent = hideZero && apps.length
-                    ? 'No applications have attributed cMAU for this period. Uncheck "Hide unused" to see all registered apps.'
-                    : 'No application-level cMAU for this period. Confirm SDKs send application.id and that grouped usage is available on your plan.';
+                elements.chargebackAppsEmpty.textContent = hideZero && rows.length
+                    ? `No ${noun}s have attributed cMAU for this period. Uncheck "Hide unused" to see all.`
+                    : (billingDim === 'project'
+                        ? 'No per-project cMAU for this period (environment-level usage unavailable).'
+                        : 'No application-level cMAU for this period. Confirm SDKs send application.id and that grouped usage is available on your plan.');
             }
             elements.chargebackAppsBody.innerHTML = '';
         } else {
             if (elements.chargebackAppsEmpty) elements.chargebackAppsEmpty.style.display = 'none';
-            elements.chargebackAppsBody.innerHTML = displayApps.map(r => {
+            elements.chargebackAppsBody.innerHTML = displayRows.map(r => {
                 const isUnattributed = r.key === 'unknown';
                 const rowClass = [
                     r.peak === 0 ? 'row-zero' : '',
                     isUnattributed ? 'row-unattributed' : ''
                 ].filter(Boolean).join(' ');
-                const displayName = isUnattributed ? 'Unattributed (no application.id)' : r.name;
+                const displayName = isUnattributed
+                    ? (billingDim === 'project' ? 'Unattributed (no project)' : 'Unattributed (no application.id)')
+                    : r.name;
                 return `
                 <tr class="${rowClass}">
-                    <td><code>${escapeHtml(r.key)}</code></td>
-                    <td>${escapeHtml(displayName)}</td>
-                    <td>${escapeHtml(String(r.kind))}</td>
-                    <td class="proj-tags-cell">${
+                    <td>${escapeHtml(displayName)}<br><code class="cb-app-key">${escapeHtml(r.key)}</code></td>
+                    <td class="cb-billing-app-only">${escapeHtml(String(r.kind))}</td>
+                    <td class="proj-tags-cell cb-billing-app-only">${
                         r.projects && r.projects.length
                             ? r.projects.map(p => `<span class="proj-tag">${escapeHtml(p)}</span>`).join('')
                             : '<span class="proj-tag-none">—</span>'
@@ -3664,18 +3725,24 @@ function exportToCsv() {
 
 // Block 1 — billing: primary-context cMAU by application.
 function exportChargebackAppsCsv() {
-    const rows = state.chargeback?.apps || [];
+    const dim = state.chargebackBillingDim === 'project' ? 'project' : 'app';
+    const rows = dim === 'project' ? (state.chargeback?.appsByProject || []) : (state.chargeback?.apps || []);
     if (!rows.length) {
-        showError('No chargeback application rows to export.');
+        showError(`No chargeback ${dim} rows to export.`);
         return;
     }
     const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
-    const header = ['applicationKey', 'name', 'kind', 'cmau', 'sharePercentOrg'];
+    const entityCol = dim === 'project' ? 'projectKey' : 'applicationKey';
+    const header = dim === 'project'
+        ? [entityCol, 'name', 'cmau', 'sharePercentOrg']
+        : [entityCol, 'name', 'kind', 'cmau', 'sharePercentOrg'];
     const lines = [
         header.join(','),
-        ...rows.map(r => [q(r.key), q(r.name), q(r.kind), r.peak, r.share.toFixed(4)].join(','))
+        ...rows.map(r => (dim === 'project'
+            ? [q(r.key), q(r.name), r.peak, r.share.toFixed(4)]
+            : [q(r.key), q(r.name), q(r.kind), r.peak, r.share.toFixed(4)]).join(','))
     ].join('\n');
-    downloadTextFile(lines, `ld-chargeback-billing-apps-${formatDateForInput(new Date())}.csv`);
+    downloadTextFile(lines, `ld-chargeback-billing-${dim === 'project' ? 'projects' : 'apps'}-${formatDateForInput(new Date())}.csv`);
 }
 
 // Block 2 — largest context kind proportional allocation, for the active dimension.
@@ -3982,6 +4049,16 @@ function initEventListeners() {
     // Per-chart / per-table Export CSV buttons (data-export="chart:<key>" | "table:<key>").
     document.querySelectorAll('[data-export]').forEach(btn => {
         btn.addEventListener('click', () => exportDataset(btn.getAttribute('data-export')));
+    });
+
+    // Chargeback billing-table dimension toggle (by application ↔ by project).
+    document.querySelectorAll('[data-cb-billing-dim]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const dim = btn.getAttribute('data-cb-billing-dim');
+            if (!dim || dim === state.chargebackBillingDim) return;
+            state.chargebackBillingDim = dim;
+            renderChargebackTables();
+        });
     });
 
     // Contributor grouping (by application ↔ by project) — applies to both metrics.
