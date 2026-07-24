@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=11">
+    <link rel="stylesheet" href="styles.css?v=22">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -86,17 +86,10 @@
                         </div>
 
                         <div class="form-group">
-                            <label for="date-range">Time Period</label>
+                            <label for="billing-month">Billing Month</label>
                             <div class="date-range-controls">
-                                <select id="date-preset">
-                                    <option value="7d">Last 7 days</option>
-                                    <option value="14d">Last 14 days</option>
-                                    <option value="30d" selected>Last 30 days</option>
-                                    <option value="60d">Last 60 days</option>
-                                    <option value="90d">Last 90 days</option>
-                                    <option value="180d">Last 180 days</option>
-                                    <option value="365d">Last 365 days</option>
-                                    <option value="custom">Custom range</option>
+                                <select id="billing-month">
+                                    <!-- Options populated by JS: "This month", "Last month", + last N months, + Custom range -->
                                 </select>
                                 <div class="custom-date-inputs" id="custom-dates" style="display: none;">
                                     <input type="date" id="start-date" placeholder="Start date">
@@ -104,26 +97,7 @@
                                     <input type="date" id="end-date" placeholder="End date">
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="context-kind">Context Kind (optional)</label>
-                            <input type="text" id="context-kind" placeholder="e.g. user, device" autocomplete="off">
-                            <span class="helper-text">Comma separate to filter multiple context kinds. Leave blank to include all.</span>
-                            <label class="checkbox-row">
-                                <input type="checkbox" id="chargeback-use-context-filters">
-                                <span>Apply context-kind filters to Chargeback tables (off = raw org totals; recommended for proportional chargeback)</span>
-                            </label>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="aggregation-type">Aggregation Window</label>
-                            <select id="aggregation-type">
-                                <option value="rolling_30d" selected>Rolling 30 day</option>
-                                <option value="month_to_date">Month to date</option>
-                                <option value="daily_incremental">Daily incremental</option>
-                            </select>
-                            <span class="helper-text">Client-side MAU API maps daily incremental → incremental.</span>
+                            <span class="helper-text">Chargeback uses the last day of the selected month as the snapshot day.</span>
                         </div>
 
                         <div class="form-group capacity-config" id="capacity-config-group">
@@ -247,6 +221,19 @@
                             <li><strong>Trends</strong> — Time series, project cards, and CSV export for analysis</li>
                         </ul>
                     </div>
+
+                    <div class="chart-container wide">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Billed cMAU by month</h3>
+                                <p class="section-sub">Month-end MTD cMAU (primary context kind, unfiltered) for the last 12 months. Current month is the running MTD as of today (partial). Contracted-limit + 70/90% threshold lines overlay if a cMAU limit is set in Configuration.</p>
+                            </div>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="billed-cmau-history-chart"></canvas>
+                        </div>
+                        <p id="billed-cmau-history-empty" class="helper-inline muted" style="display:none;">No monthly billed cMAU data returned. Confirm the token has read access to <code>/usage/clientside-mau</code>.</p>
+                    </div>
                 </div>
 
                 <!-- Panel: cMAU & application attribution -->
@@ -261,12 +248,24 @@
                     <table style="display:none;" id="applications-registry-table"></table>
                 </div>
 
-                <!-- Chargeback: cMAU by application -->
+                <!-- Chargeback: explicit switch between the two views -->
+                <div class="chargeback-view-switch" role="group" aria-label="cMAU view">
+                    <button type="button" class="cb-view-btn active" data-cb-view="billing" aria-pressed="true">
+                        <span class="cb-view-title">Billing</span>
+                        <span class="cb-view-sub">Billed cMAU · primary context · reconciles to invoice</span>
+                    </button>
+                    <button type="button" class="cb-view-btn" data-cb-view="largestKind" aria-pressed="false">
+                        <span class="cb-view-title">Largest context kind</span>
+                        <span class="cb-view-sub">De-duplicated proportional comparison · not the billed number</span>
+                    </button>
+                </div>
+
+                <!-- Block 1 — Billing: cMAU by application (primary context) -->
                 <div id="chargeback-apps-section" class="chargeback-section">
                     <div class="section-header">
                         <div>
-                            <h3>cMAU by application</h3>
-                            <p class="section-sub">All registered applications. Cost share &asymp; application cMAU &divide; org total for the selected period. <strong>Period total</strong>: sum of daily unique-user counts within your date range (caveat: users active on multiple days are counted on each). Independent of the Aggregation Window selector. SDKs must send <code>application.id</code> at init for attribution.</p>
+                            <h3>cMAU billing by application <span class="section-tag">primary context</span></h3>
+                            <p class="section-sub">Month-to-date billed cMAU per application <strong>as reported by LD on the snapshot day</strong> (<span id="chargeback-snapshot-day">&mdash;</span>). Primary context kind only — cannot de-duplicate across kinds. Cost share &asymp; app cMAU &divide; org cMAU. SDKs must send <code>application.id</code> at init.</p>
                             <p id="chargeback-apps-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
                         </div>
                         <div class="section-header-actions">
@@ -285,14 +284,47 @@
                                     <th>Name</th>
                                     <th>Kind</th>
                                     <th>Projects</th>
-                                    <th class="num">Peak cMAU</th>
+                                    <th class="num">cMAU</th>
                                     <th class="num">Share of org</th>
                                 </tr>
                             </thead>
                             <tbody id="chargeback-apps-body"></tbody>
                         </table>
                     </div>
-                    <p id="chargeback-apps-empty" class="helper-inline muted" style="display:none;">No application-level <strong>cMAU series</strong> for this period (<code>groupBy=sdkAppId</code>). Check the <strong>Registered applications</strong> table above — if apps exist but this stays empty, grouped usage may be unavailable for your plan or date range; confirm SDKs send <code>application.id</code>.</p>
+                    <p id="chargeback-apps-empty" class="helper-inline muted" style="display:none;">No application-level cMAU for this period. Confirm SDKs send <code>application.id</code> and that grouped usage is available on your plan.</p>
+                </div>
+
+                <!-- Block 2 — Largest context kind proportional allocation -->
+                <div id="chargeback-largestkind-section" class="chargeback-section">
+                    <div class="section-header">
+                        <div>
+                            <h3><span id="chargeback-lk-title">Largest context kind by application</span> <span class="section-tag">proportional</span></h3>
+                            <p class="section-sub">Each <span id="chargeback-lk-entity-word">application</span> sized by its single <strong>largest context kind</strong> (client-side context usage across all kinds, from <code>/usage/clientside-contexts</code>), allocated proportionally against the sum of those maxima. De-duplicated relative comparison &mdash; LaunchDarkly increasingly bills on the highest-cardinality kind, so this tracks the billing-relevant dimension rather than the primary-context figure above.</p>
+                            <p id="chargeback-kind-note" class="helper-inline muted" style="margin-top:0.35rem; display:none;"></p>
+                        </div>
+                        <div class="section-header-actions">
+                            <div class="chargeback-dim-toggle" id="chargeback-dim-toggle" role="group" aria-label="Largest-kind dimension">
+                                <button type="button" class="cb-dim-btn active" data-cb-dim="app" aria-pressed="true">By application</button>
+                                <button type="button" class="cb-dim-btn" data-cb-dim="project" aria-pressed="false">By project</button>
+                            </div>
+                            <button type="button" id="export-chargeback-largestkind" class="btn secondary small">Export CSV</button>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th id="chargeback-lk-entity-col">Application</th>
+                                    <th>Largest context kind</th>
+                                    <th class="num">Context usages (largest kind)</th>
+                                    <th class="num">Proportional share</th>
+                                    <th class="num">Total across kinds</th>
+                                </tr>
+                            </thead>
+                            <tbody id="chargeback-largestkind-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="chargeback-largestkind-empty" class="helper-inline muted" style="display:none;">No largest-context-kind data for this period.</p>
                 </div>
 
                 <!-- Chargeback: unattributed cMAU gap -->
@@ -300,7 +332,7 @@
                     <div class="section-header">
                         <div>
                             <h3>Unattributed cMAU by environment</h3>
-                            <p class="section-sub">Environment total minus sum of attributed application cMAU in that environment (same aggregation window).</p>
+                            <p class="section-sub">Environment-level month-to-date cMAU as of the snapshot day (<span id="chargeback-snapshot-day-gap">&mdash;</span>), broken out by LD&rsquo;s <code>Unknown</code> sdkAppId bucket for SDK instances that did not set <code>application.id</code>.</p>
                         </div>
                         <button type="button" id="export-chargeback-gap" class="btn secondary small">Export CSV</button>
                     </div>
@@ -410,8 +442,9 @@
 
                 <!-- Panel: Capacity -->
                 <div id="panel-capacity" class="dashboard-panel" style="display: none;">
+                <p class="section-sub" style="margin-bottom:0.6rem;">Select a dimension to drive the growth, projection, and contributor views below.</p>
                 <div id="capacity-meters" class="capacity-meters">
-                    <div class="capacity-meter-card" id="meter-cmau-wrap">
+                    <div class="capacity-meter-card is-selectable" id="meter-cmau-wrap" data-cap-metric="cmau" role="button" tabindex="0" aria-pressed="true" title="Show cMAU growth &amp; projection below">
                         <div class="capacity-meter-head">
                             <h3>cMAU utilization</h3>
                             <span class="meter-value" id="meter-cmau-label">--</span>
@@ -419,7 +452,7 @@
                         <div class="meter-track"><div class="meter-fill" id="meter-cmau-fill"></div></div>
                         <p class="meter-footnote" id="meter-cmau-note">Set a contracted cMAU in Configuration to see utilization.</p>
                     </div>
-                    <div class="capacity-meter-card" id="meter-conn-wrap">
+                    <div class="capacity-meter-card is-selectable" id="meter-conn-wrap" data-cap-metric="connections" role="button" tabindex="0" aria-pressed="false" title="Show service-connection growth &amp; projection below">
                         <div class="capacity-meter-head">
                             <h3>Service connections utilization</h3>
                             <span class="meter-value" id="meter-conn-label">--</span>
@@ -428,6 +461,68 @@
                         <p class="meter-footnote" id="meter-conn-note">Peak streams in period vs your contracted ceiling.</p>
                     </div>
                 </div>
+
+                <!-- Capacity growth + run-rate projection -->
+                <div class="chart-container wide">
+                    <div class="chart-header">
+                        <div>
+                            <h3>Capacity growth &amp; run-rate projection</h3>
+                            <p class="section-sub">Month-by-month usage across completed months (solid), extended by a projected run rate (dashed) using the rolling 3-month average growth. Contracted-limit + 70/90% lines overlay when the matching contracted limit is set in Configuration.</p>
+                            <p id="capacity-growth-subtitle" class="helper-inline" style="margin-top:0.35rem;"></p>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="capacity-growth-chart"></canvas>
+                    </div>
+                    <p id="capacity-growth-empty" class="helper-inline muted" style="display:none;">Not enough completed-month history to project a run rate for this metric yet.</p>
+                </div>
+
+                <!-- Contributor attribution over time -->
+                <div class="chart-container wide">
+                    <div class="chart-header section-header-spaced">
+                        <div>
+                            <h3>Who is contributing (<span id="capacity-contrib-metric-label">cMAU by application</span>)</h3>
+                            <p class="section-sub">Per-entity usage stacked over the trailing 12 months (top 8 + Other). App attribution requires SDKs to send <code>application.id</code>; the <em>Unattributed</em> slice is usage LaunchDarkly could not map.</p>
+                        </div>
+                        <div class="capacity-group-toggle" id="capacity-group-toggle" role="group" aria-label="Group connections by" style="display:none;">
+                            <button type="button" class="cap-group-btn active" data-cap-group="app" aria-pressed="true">By application</button>
+                            <button type="button" class="cap-group-btn" data-cap-group="project" aria-pressed="false">By project</button>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="capacity-contrib-chart"></canvas>
+                    </div>
+                    <p id="capacity-contrib-empty" class="helper-inline muted" style="display:none;">No per-application history returned for this metric. Per-project attribution is unavailable on most plans; attribution is by application only.</p>
+                </div>
+
+                <!-- Per-app growth summary + CSV export -->
+                <div class="table-section">
+                    <div class="section-header section-header-spaced">
+                        <div>
+                            <h3>Application growth summary</h3>
+                            <p class="section-sub">Latest-month usage, rolling 3-month growth rate, and share of the org total per application. Export the full month-by-month matrix and projection as CSV.</p>
+                            <p id="capacity-growth-gap-note" class="helper-inline muted" style="margin-top:0.35rem;"></p>
+                        </div>
+                        <div class="section-header-actions">
+                            <button type="button" id="export-capacity-growth" class="btn secondary small">Export CSV</button>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table dense">
+                            <thead>
+                                <tr>
+                                    <th id="capacity-growth-entity-col">Application</th>
+                                    <th class="num" id="capacity-growth-latest-col">Latest cMAU</th>
+                                    <th class="num">3-mo growth</th>
+                                    <th class="num">Share of org</th>
+                                </tr>
+                            </thead>
+                            <tbody id="capacity-growth-table-body"></tbody>
+                        </table>
+                    </div>
+                    <p id="capacity-growth-table-empty" class="helper-inline muted" style="display:none;">No per-application history to summarize for this metric.</p>
+                </div>
+
                 <div class="capacity-checklist-card">
                     <h3>Monthly capacity signals</h3>
                     <p class="section-sub">Same usage data as chargeback; track growth and headroom (see <code>chargebackspec.md</code>).</p>
@@ -587,7 +682,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=41"></script>
 </body>
 </html>
 

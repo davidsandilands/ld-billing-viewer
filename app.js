@@ -15,6 +15,10 @@ const state = {
     applications: [],
     applicationsError: null,
     viewMode: 'overview',
+    capacityMetric: 'cmau',
+    capacityConnGroup: 'app',
+    chargebackView: 'billing',
+    chargebackDim: 'app',
     usageData: {
         mau: [],
         streams: [],
@@ -33,7 +37,10 @@ const state = {
     },
     charts: {
         cmau: null,
-        connections: null
+        connections: null,
+        billedCmauHistory: null,
+        capacityGrowth: null,
+        capacityContrib: null
     }
 };
 
@@ -44,12 +51,10 @@ const state = {
 const elements = {
     apiKeyInput: document.getElementById('api-key'),
     toggleApiKey: document.getElementById('toggle-api-key'),
-    datePreset: document.getElementById('date-preset'),
+    billingMonth: document.getElementById('billing-month'),
     customDates: document.getElementById('custom-dates'),
     startDate: document.getElementById('start-date'),
     endDate: document.getElementById('end-date'),
-    contextKind: document.getElementById('context-kind'),
-    aggregationType: document.getElementById('aggregation-type'),
     fetchButton: document.getElementById('fetch-data'),
     toggleConfig: document.getElementById('toggle-config'),
     configPanel: document.getElementById('config-panel'),
@@ -84,17 +89,25 @@ const elements = {
     exportCsv: document.getElementById('export-csv'),
     capacityCmauLimit: document.getElementById('capacity-cmau-limit'),
     capacityConnLimit: document.getElementById('capacity-conn-limit'),
-    chargebackUseContextFilters: document.getElementById('chargeback-use-context-filters'),
     capacityMeters: document.getElementById('capacity-meters'),
     chargebackAppsSection: document.getElementById('chargeback-apps-section'),
     chargebackGapSection: document.getElementById('chargeback-gap-section'),
     chargebackSdksSection: document.getElementById('chargeback-sdks-section'),
     chargebackAppsBody: document.getElementById('chargeback-apps-body'),
     chargebackGapBody: document.getElementById('chargeback-gap-body'),
+    chargebackSnapshotDay: document.getElementById('chargeback-snapshot-day'),
+    chargebackSnapshotDayGap: document.getElementById('chargeback-snapshot-day-gap'),
     chargebackSdksBody: document.getElementById('chargeback-sdks-body'),
     chargebackAppsEmpty: document.getElementById('chargeback-apps-empty'),
     chargebackGapEmpty: document.getElementById('chargeback-gap-empty'),
     chargebackSdksEmpty: document.getElementById('chargeback-sdks-empty'),
+    chargebackKindNote: document.getElementById('chargeback-kind-note'),
+    chargebackLargestkindBody: document.getElementById('chargeback-largestkind-body'),
+    chargebackLargestkindEmpty: document.getElementById('chargeback-largestkind-empty'),
+    chargebackLkTitle: document.getElementById('chargeback-lk-title'),
+    chargebackLkEntityCol: document.getElementById('chargeback-lk-entity-col'),
+    chargebackLkEntityWord: document.getElementById('chargeback-lk-entity-word'),
+    exportChargebackLargestkind: document.getElementById('export-chargeback-largestkind'),
     breakdownHeading: document.getElementById('breakdown-heading'),
     meterCmauFill: document.getElementById('meter-cmau-fill'),
     meterCmauLabel: document.getElementById('meter-cmau-label'),
@@ -113,6 +126,8 @@ const elements = {
     applicationsRegistryTable: document.getElementById('applications-registry-table'),
     applicationsCountBadge: document.getElementById('applications-count-badge'),
     panelOverview: document.getElementById('panel-overview'),
+    billedCmauHistoryChart: document.getElementById('billed-cmau-history-chart'),
+    billedCmauHistoryEmpty: document.getElementById('billed-cmau-history-empty'),
     panelCmau: document.getElementById('panel-cmau'),
     panelConnections: document.getElementById('panel-connections'),
     panelCapacity: document.getElementById('panel-capacity'),
@@ -123,7 +138,21 @@ const elements = {
     connectionsByAppBody: document.getElementById('connections-by-app-body'),
     connectionsByAppEmpty: document.getElementById('connections-by-app-empty'),
     connectionsByAppMeta: document.getElementById('connections-by-app-meta'),
-    exportConnectionsByApp: document.getElementById('export-connections-by-app')
+    exportConnectionsByApp: document.getElementById('export-connections-by-app'),
+    // Capacity growth / projection / contributor
+    capacityGrowthChart: document.getElementById('capacity-growth-chart'),
+    capacityGrowthSubtitle: document.getElementById('capacity-growth-subtitle'),
+    capacityGrowthEmpty: document.getElementById('capacity-growth-empty'),
+    capacityContribChart: document.getElementById('capacity-contrib-chart'),
+    capacityContribEmpty: document.getElementById('capacity-contrib-empty'),
+    capacityGrowthTableBody: document.getElementById('capacity-growth-table-body'),
+    capacityGrowthTableEmpty: document.getElementById('capacity-growth-table-empty'),
+    capacityGrowthGapNote: document.getElementById('capacity-growth-gap-note'),
+    exportCapacityGrowth: document.getElementById('export-capacity-growth'),
+    capacityContribMetricLabel: document.getElementById('capacity-contrib-metric-label'),
+    capacityGrowthLatestCol: document.getElementById('capacity-growth-latest-col'),
+    capacityGrowthEntityCol: document.getElementById('capacity-growth-entity-col'),
+    capacityGroupToggle: document.getElementById('capacity-group-toggle')
 };
 
 // ==========================================
@@ -181,29 +210,75 @@ function validateDateRange(start, end) {
 /**
  * Get date range based on preset selection
  */
+/**
+ * Convert a "YYYY-MM" identifier to a {start, end} range covering that calendar month.
+ * end is clamped to today when the month is the current (partial) month, so we never
+ * ask LD for future data.
+ */
+function monthToRange(yyyymm) {
+    const [y, m] = yyyymm.split('-').map(Number);
+    const start = new Date(y, m - 1, 1);
+    const monthEnd = new Date(y, m, 0); // last day of month
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const end = monthEnd > today ? today : monthEnd;
+    return { start, end };
+}
+
+function formatMonthLabel(yyyymm) {
+    const [y, m] = yyyymm.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function currentMonthKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function previousMonthKey() {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Populate the billing-month <select> with:
+ *   this month  ·  last month  ·  the previous 10 months  ·  custom
+ * Default = last month (the most recent complete month, matches spec's cadence).
+ */
+function populateBillingMonthOptions() {
+    if (!elements.billingMonth) return;
+    const now = new Date();
+    const thisKey = currentMonthKey();
+    const lastKey = previousMonthKey();
+
+    const options = [
+        `<option value="${thisKey}">This month (${formatMonthLabel(thisKey)})</option>`,
+        `<option value="${lastKey}" selected>Last month (${formatMonthLabel(lastKey)})</option>`
+    ];
+    for (let i = 2; i <= 11; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        options.push(`<option value="${key}">${formatMonthLabel(key)}</option>`);
+    }
+    options.push(`<option value="custom">Custom range</option>`);
+    elements.billingMonth.innerHTML = options.join('');
+}
+
 function getDateRange() {
-    const preset = elements.datePreset.value;
-    const end = new Date();
-    let start = new Date();
-    
-    if (preset === 'custom') {
+    const value = elements.billingMonth?.value;
+    if (value === 'custom') {
         return {
             start: new Date(elements.startDate.value),
             end: new Date(elements.endDate.value)
         };
     }
-    
-    // Extract days from preset (e.g., "180d" -> 180)
-    const days = parseInt(preset.replace('d', ''));
-    if (isNaN(days)) {
-        console.error('Invalid date preset:', preset);
-        // Default to 30 days if parsing fails
-        start.setDate(end.getDate() - 30);
-    } else {
-        start.setDate(end.getDate() - days);
+    if (value && /^\d{4}-\d{2}$/.test(value)) {
+        return monthToRange(value);
     }
-    
-    return { start, end };
+    // Fallback: last month.
+    return monthToRange(previousMonthKey());
 }
 
 /**
@@ -418,6 +493,105 @@ async function fetchClientsideMauGrouped(from, to, groupByList, {
     return apiRequest('/usage/clientside-mau', params, { apiVersion: 'beta' });
 }
 
+/** Resolve a grouped-column's metadata to an application {key, name}. */
+function makeAppEntityResolver() {
+    const byKey = new Map((state.applications || []).map(a => [a.key, a]));
+    return (meta) => {
+        const raw = extractSdkAppId(meta);
+        const isUnknown = !raw || String(raw).toLowerCase() === 'unknown';
+        const key = isUnknown ? 'unknown' : raw;
+        return { key, name: isUnknown ? 'Unattributed' : (byKey.get(key)?.name || key) };
+    };
+}
+
+/** Resolve a grouped-column's metadata to a project {key, name}. */
+function makeProjectEntityResolver() {
+    const byKey = new Map((state.projects || []).map(p => [p.key, p]));
+    const byId = new Map((state.projects || []).map(p => [String(p._id || p.id), p]));
+    return (meta) => {
+        // clientside-mau exposes projectId; /usage/mau exposes `project` (may be a key or an id).
+        let projKey = resolveProjectKeyFromId(extractProjectId(meta));
+        const rawProject = meta && typeof meta.project === 'string' ? meta.project.trim() : '';
+        if (!projKey && rawProject) {
+            projKey = byId.get(rawProject)?.key || (byKey.has(rawProject) ? rawProject : rawProject);
+        }
+        const isUnknown = !projKey;
+        const key = isUnknown ? 'unknown' : projKey;
+        return { key, name: isUnknown ? 'Unattributed' : (byKey.get(key)?.name || projKey) };
+    };
+}
+
+/**
+ * Fetch a per-entity metric month-by-month for the trailing `monthCount` months.
+ *
+ * The grouped usage endpoints reject large multi-month windows, so we request each calendar
+ * month separately (all in parallel) and reduce each column's daily series to a single value:
+ *   - aggMode 'snapshot' → month-end value (used for cMAU / month-to-date metrics)
+ *   - aggMode 'peak'     → peak in the month (used for service connections)
+ *
+ * `fetchFn(from, to)` returns a grouped `{ metadata[], series[] }` response; `resolveEntity(meta)`
+ * maps each column to its `{ key, name }` (application or project).
+ *
+ * Shape: {
+ *   months:     [{ monthKey, monthLabel, isPartial }],          // oldest → newest
+ *   apps:       [{ key, name, byMonth: { [monthKey]: value } }], // entities, sorted by latest month desc
+ *   orgByMonth: { [monthKey]: sumOfPerEntityValues }            // incl. the unattributed bucket
+ * }
+ */
+async function fetchMonthlyAppMetric(monthCount, fetchFn, aggMode = 'snapshot', resolveEntity = null) {
+    const resolve = resolveEntity || makeAppEntityResolver();
+    const now = new Date();
+    const monthDefs = [];
+    for (let i = monthCount - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthDefs.push({
+            monthKey,
+            monthLabel: d.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+            isPartial: monthKey === currentMonthKey(),
+            range: monthToRange(monthKey)
+        });
+    }
+
+    // Fire every month in parallel — wall-clock is ~one grouped call, not monthCount serial.
+    const raws = await Promise.all(monthDefs.map(m =>
+        Promise.resolve(fetchFn(m.range.start, m.range.end)).catch(() => null)
+    ));
+
+    const appMap = new Map();
+    const orgByMonth = {};
+
+    monthDefs.forEach((m, idx) => {
+        const cols = groupedUsageToColumns(raws[idx]);
+        let orgTotal = 0;
+        cols.forEach(col => {
+            // Columns without a resolvable entity (e.g. connections not tied to an application)
+            // are consolidated into the "Unattributed" bucket — never a raw "column-N" label.
+            const { key, name } = resolve(col.meta);
+            const value = aggMode === 'peak' ? getPeakValue(col.series) : getSeriesValue(col.series, 'snapshot');
+            if (!Number.isFinite(value)) return;
+            orgTotal += value;
+            if (!appMap.has(key)) {
+                appMap.set(key, { key, name, byMonth: {} });
+            }
+            // Accumulate in case the same bucket appears as more than one column in a month.
+            appMap.get(key).byMonth[m.monthKey] = (appMap.get(key).byMonth[m.monthKey] || 0) + value;
+        });
+        orgByMonth[m.monthKey] = orgTotal;
+    });
+
+    const apps = [...appMap.values()];
+    const latestKey = monthDefs[monthDefs.length - 1].monthKey;
+    apps.sort((a, b) =>
+        (b.byMonth[latestKey] || 0) - (a.byMonth[latestKey] || 0) || a.key.localeCompare(b.key));
+
+    return {
+        months: monthDefs.map(({ monthKey, monthLabel, isPartial }) => ({ monthKey, monthLabel, isPartial })),
+        apps,
+        orgByMonth
+    };
+}
+
 /**
  * Convert grouped SeriesListRep to column peaks + metadata
  */
@@ -505,16 +679,22 @@ function buildChargebackApplicationRows(columnEntries, applications, orgCmauTota
     // Build rows from cMAU grouped data
     const rowMap = new Map();
     columnEntries.forEach(e => {
-        const key = extractSdkAppId(e.meta) || `column-${e.index}`;
+        const rawAppId = extractSdkAppId(e.meta);
+        // Columns without a resolvable sdkAppId are consolidated into the "Unattributed" bucket
+        // rather than surfaced as a raw "column-N" label.
+        const isUnknown = !rawAppId || String(rawAppId).toLowerCase() === 'unknown';
+        const key = isUnknown ? 'unknown' : rawAppId;
         const app = byKey.get(key);
         const value = getSeriesValue(e.series, aggregationType);
-        const share = orgCmauTotal > 0 ? (value / orgCmauTotal) * 100 : 0;
+        const existing = rowMap.get(key);
+        // Accumulate in case more than one column maps to the same bucket (e.g. Unattributed).
+        const peak = (existing?.peak || 0) + value;
         rowMap.set(key, {
             key,
-            name: app?.name || key,
+            name: isUnknown ? 'Unattributed' : (app?.name || key),
             kind: app?.kind || '—',
-            peak: value,
-            share,
+            peak,
+            share: orgCmauTotal > 0 ? (peak / orgCmauTotal) * 100 : 0,
             projects: appProjectMap ? (appProjectMap.get(key) || []) : []
         });
     });
@@ -721,6 +901,83 @@ async function fetchLegacyMauUsage(from, to) {
         // Return empty structure if endpoint not available
         return { _links: {}, metadata: [], series: [] };
     }
+}
+
+/**
+ * Enumerate the account's client-side context kinds by unioning each project's context-kinds.
+ * /usage/clientside-contexts won't split by kind when grouped by an entity, so we need the kind
+ * list up front to drive per-kind filtered calls. Returns an array of kind keys (e.g. ['user','device']).
+ */
+async function fetchAccountContextKinds() {
+    const projects = state.projects || [];
+    const results = await Promise.all(projects.map(p =>
+        apiRequest(`/projects/${encodeURIComponent(p.key)}/context-kinds`)
+            .then(r => (r && Array.isArray(r.items)) ? r.items : [])
+            .catch(() => [])
+    ));
+    const kinds = new Set();
+    results.forEach(items => items.forEach(k => { if (k && k.key) kinds.add(String(k.key)); }));
+    if (!kinds.size) kinds.add('user'); // sensible fallback so we still attempt something
+    return [...kinds];
+}
+
+/**
+ * For each context kind, fetch client-side context usage grouped by the entity dimension, filtered
+ * to that one kind. Returns [{ kind, raw }] — one grouped response per kind — which the matrix
+ * builder folds into per-(entity × kind) values. Fired in parallel.
+ * @param {'sdkAppId'|'projectId'} entityDim
+ */
+async function fetchPerKindContexts(from, to, entityDim, kinds) {
+    return Promise.all(kinds.map(kind =>
+        apiRequest('/usage/clientside-contexts', {
+            from: formatDateForApi(from),
+            to: formatDateForApi(to),
+            aggregationType: 'month_to_date',
+            groupBy: [entityDim],
+            contextKind: [kind]
+        }, { apiVersion: 'beta' })
+            .then(raw => ({ kind, raw }))
+            .catch(e => ({ kind, raw: { __error: String((e && e.message) || e) } }))
+    ));
+}
+
+/**
+ * Build the "largest context kind" rows from a set of per-kind grouped responses. Each entity's
+ * value for a kind is the peak of that (entity, kind) series; the entity is sized by its single
+ * largest kind, and shares are proportional to Σ(per-entity largest).
+ */
+function buildLargestKindRowsFromPerKind(perKind, resolveEntity) {
+    const byEntity = new Map();
+    let firstError = null;
+    let columns = 0;
+    (perKind || []).forEach(({ kind, raw }) => {
+        if (!raw || raw.__error) { if (raw && raw.__error && !firstError) firstError = raw.__error; return; }
+        const cols = groupedUsageToColumns(raw);
+        columns += cols.length;
+        cols.forEach(col => {
+            const { key, name } = resolveEntity(col.meta);
+            const value = getPeakValue(col.series);
+            if (!Number.isFinite(value) || value <= 0) return;
+            if (!byEntity.has(key)) byEntity.set(key, { key, name, kinds: {} });
+            const ent = byEntity.get(key);
+            ent.kinds[kind] = (ent.kinds[kind] || 0) + value;
+        });
+    });
+    const debug = { kindsQueried: (perKind || []).length, columns, error: firstError };
+    if (!byEntity.size) return { available: false, rows: [], denom: 0, metaKeys: [], debug };
+
+    const rows = [...byEntity.values()].map(ent => {
+        let largestKind = null, largestValue = 0, totalAllKinds = 0;
+        Object.entries(ent.kinds).forEach(([k, v]) => {
+            totalAllKinds += v;
+            if (v > largestValue) { largestValue = v; largestKind = k; }
+        });
+        return { key: ent.key, name: ent.name, largestKind, largestValue, totalAllKinds, kinds: ent.kinds };
+    });
+    const denom = rows.reduce((s, r) => s + r.largestValue, 0);
+    rows.forEach(r => { r.share = denom > 0 ? (r.largestValue / denom) * 100 : 0; });
+    rows.sort((a, b) => b.largestValue - a.largestValue || a.key.localeCompare(b.key));
+    return { available: true, rows, denom, metaKeys: [], debug };
 }
 
 /**
@@ -944,16 +1201,7 @@ async function fetchAllUsageData() {
         return;
     }
     state.dateRange = { start, end };
-    
-    const contextInput = elements.contextKind.value.trim();
-    const contextKinds = contextInput
-        .split(',')
-        .map(value => value.trim())
-        .filter(Boolean);
-    const aggregationType = elements.aggregationType.value || 'rolling_30d';
-    state.filters = { contextKinds, aggregationType };
-    const chargebackContexts = elements.chargebackUseContextFilters?.checked ? contextKinds : [];
-    
+
     showLoading();
     hideError();
     
@@ -984,7 +1232,8 @@ async function fetchAllUsageData() {
             browserStreamsByApp,
             mobileStreamsByApp,
             mauDailyIncrementalRaw,
-            mauBilledRaw
+            mauBilledRaw,
+            mauMtdYearRaw
         ] = await Promise.all([
             fetchServiceConnections(start, end),
             fetchServiceConnections(start, end, true),
@@ -999,42 +1248,50 @@ async function fetchAllUsageData() {
                 return [];
             }),
             fetchMauSdksUsage(start, end),
-            // Chargeback fetches use daily_incremental ALWAYS — we want a strict-period total
-            // (sum of daily unique counts across the selected date range), regardless of which
-            // Aggregation Window the user has selected for the Trends view. Caveat: users active
-            // on multiple days are counted on each (the share / gap math still reconciles
-            // because all four chargeback fetches use the same basis).
+            // Chargeback fetches use month_to_date — this is the LD-authoritative billing basis
+            // (confirmed via internal SME Jeff + billing metrics validation Confluence pages).
+            // Direct quote: "[rolling 30d] are going to generally be trickier and will never match
+            // the billing metric. I would suggest just using the month-end MTD numbers."
+            // Downstream code extracts the value on the snapshot day via getSeriesValue(_, 'snapshot').
             fetchClientsideMauGrouped(start, end, ['sdkAppId'], {
-                contextKinds: chargebackContexts,
-                aggregationTypeUi: 'daily_incremental'
+                aggregationTypeUi: 'month_to_date'
             }).catch(() => null),
             fetchClientsideMauGrouped(start, end, ['projectId', 'environmentId'], {
-                contextKinds: chargebackContexts,
-                aggregationTypeUi: 'daily_incremental'
+                aggregationTypeUi: 'month_to_date'
             }).catch(() => null),
             fetchClientsideMauGrouped(start, end, ['projectId', 'environmentId', 'sdkAppId'], {
-                contextKinds: chargebackContexts,
-                aggregationTypeUi: 'daily_incremental'
+                aggregationTypeUi: 'month_to_date'
             }).catch(() => null),
             fetchClientsideMauUsage(start, end, {
-                contextKinds: chargebackContexts,
-                aggregationType: 'daily_incremental'
+                aggregationType: 'month_to_date'
             }).catch(() => ({ metadata: [], series: [] })),
             fetchServiceConnectionsBy('sdkAppId', start, end),
             fetchServiceConnectionsBy('projectId,sdkAppId', start, end),
             fetchStreamsUsage('browser', start, end, 'sdkAppId').catch(() => null),
             fetchStreamsUsage('mobile', start, end, 'sdkAppId').catch(() => null),
             fetchClientsideMauUsage(start, end, {
-                contextKinds,
                 aggregationType: 'daily_incremental'
             }).catch(() => null),
-            // Billed cMAU: unfiltered + rolling 30-day. This is what LD invoices on.
-            // Always fetched independently of the user's Aggregation Window / Context-kind selections
-            // so the summary card always shows the contracted figure.
+            // Billed cMAU: unfiltered + month_to_date. This is what LD invoices on — the final
+            // MTD value on the last day of the calendar month for the primary context kind only
+            // (confirmed via LD-internal billing methodology docs; see the memory reference).
+            // Fetched independently of the user's context-kind selections so the summary card
+            // always shows the contracted figure.
             fetchClientsideMauUsage(start, end, {
                 contextKinds: [],
-                aggregationType: 'rolling_30d'
-            }).catch(() => null)
+                aggregationType: 'month_to_date'
+            }).catch(() => null),
+            // Yearly MTD trail — used to derive the month-end billed cMAU per month for the
+            // trend chart on Overview. Unfiltered, primary-context-kind only, same aggregation
+            // as mauBilled so month-end values reconcile.
+            (() => {
+                const today = new Date();
+                const yearAgo = new Date(today.getFullYear() - 1, today.getMonth(), 1);
+                return fetchClientsideMauUsage(yearAgo, today, {
+                    contextKinds: [],
+                    aggregationType: 'month_to_date'
+                }).catch(() => null);
+            })()
         ]);
             
         state.applications = applications;
@@ -1042,34 +1299,59 @@ async function fetchAllUsageData() {
 
         const appCols = groupedUsageToColumns(cmauByAppRaw);
         const tripleColData = groupedUsageToColumns(tripleRaw);
+        const envPairCols = groupedUsageToColumns(envPairRaw);
         const appProjectMap = buildAppProjectMap(tripleColData);
         const cmauTSeries = extractTimeSeriesData(cmauChargebackTotalRaw);
-        // Chargeback math always uses daily_incremental summing (period total), regardless of
-        // the user's Aggregation Window selector. See the chargeback fetches above.
-        const chargebackAgg = 'daily_incremental';
+        // Chargeback math uses the SNAPSHOT value (rolling 30-day cMAU as of the snapshot day,
+        // which is the end of the selected date range). This is the spec-correct basis per
+        // chargebackspec.md lines 170-177 — pulling the rolling-30-day value on the same day
+        // for both env totals and per-app values lets the math reconcile to the LD invoice.
+        const chargebackAgg = 'snapshot';
         const orgCmauChargeback = getSeriesValue(cmauTSeries, chargebackAgg);
         state.chargeback = {
             apps: buildChargebackApplicationRows(appCols, applications, orgCmauChargeback, chargebackAgg, appProjectMap),
-            gap: buildGapRows(groupedUsageToColumns(envPairRaw), tripleColData, chargebackAgg),
+            gap: buildGapRows(envPairCols, tripleColData, chargebackAgg),
             mauSdks: mauSdksRaw,
-            orgCmauTotal: orgCmauChargeback
+            orgCmauTotal: orgCmauChargeback,
+            // Largest-context-kind proportional allocation — built below from per-context-kind
+            // /usage/clientside-contexts calls (the grouped-by-entity call doesn't split by kind).
+            appKind: { available: false, rows: [], denom: 0, metaKeys: [], debug: {} },
+            projectKind: { available: false, rows: [], denom: 0, metaKeys: [], debug: {} }
         };
-        
+
+        // Largest context kind requires a per-(entity × kind) matrix. The clientside-contexts
+        // endpoint won't split by kind when grouped by entity, so we enumerate the account's
+        // context kinds and fire one filtered call per kind, grouped by the entity dimension.
+        try {
+            const kinds = await fetchAccountContextKinds();
+            const [appPerKind, projPerKind] = await Promise.all([
+                fetchPerKindContexts(start, end, 'sdkAppId', kinds),
+                fetchPerKindContexts(start, end, 'projectId', kinds)
+            ]);
+            state.chargeback.appKind = buildLargestKindRowsFromPerKind(appPerKind, makeAppEntityResolver());
+            state.chargeback.projectKind = buildLargestKindRowsFromPerKind(projPerKind, makeProjectEntityResolver());
+            state.lastCtxKindRaw = { app: appPerKind, project: projPerKind, kinds };
+        } catch (e) {
+            console.warn('Largest-context-kind build failed:', e);
+            state.lastCtxKindRaw = { app: null, project: null, error: String((e && e.message) || e) };
+        }
+
         // Fetch MAU data (prioritize client-side endpoint, fallback to legacy)
         let mauData;
         let projectUsageEntries = [];
         let mauSource = 'clientside';
 
         try {
+            // These fetches use rolling_30d — the app no longer exposes an aggregation-window
+            // selector. They provide fallback data for the Trends chart if the dedicated
+            // fetches (mauBilled / mauDailyIncremental) are missing.
             mauData = await fetchClientsideMauUsage(start, end, {
-                contextKinds,
-                aggregationType
+                aggregationType: 'rolling_30d'
             });
-            
+
             // Try grouped endpoint first, but if it only returns 1 entry, fall back to per-project fetching
             const groupedProjects = await fetchClientsideMauByProject(start, end, {
-                contextKinds,
-                aggregationType
+                aggregationType: 'rolling_30d'
             });
             
             // Check if grouped response has multiple projects (groupby worked)
@@ -1163,6 +1445,61 @@ async function fetchAllUsageData() {
         // chart's "Rolling 30-day cMAU (billed)" reference line. Decoupled from user filters so
         // it always reflects what LD invoices on.
         state.usageData.mauBilled = mauBilledRaw;
+
+        // Yearly MTD series — used to derive month-end billed cMAU per month for the trend chart.
+        state.usageData.mauMtdYear = mauMtdYearRaw;
+
+        // Per-application month-by-month cMAU (month-end) and service connections (peak) across
+        // the trailing 12 months — powers the Capacity panel's growth + contributor charts and
+        // run-rate projection for whichever metric is selected. Fetched month-by-month (not one
+        // yearlong call, which the usage API rejects as "date range too large") and after the
+        // main Promise.all because it needs state.applications resolved for app names.
+        try {
+            const appResolver = makeAppEntityResolver();
+            const projectResolver = makeProjectEntityResolver();
+            const [cmauMonthly, connMonthly, connByProjectMonthly] = await Promise.all([
+                fetchMonthlyAppMetric(12,
+                    (s, e) => fetchClientsideMauGrouped(s, e, ['sdkAppId'], { aggregationTypeUi: 'month_to_date' }),
+                    'snapshot', appResolver),
+                fetchMonthlyAppMetric(12,
+                    (s, e) => fetchServiceConnectionsBy('sdkAppId', s, e),
+                    'peak', appResolver),
+                fetchMonthlyAppMetric(12,
+                    (s, e) => fetchServiceConnectionsBy('projectId', s, e),
+                    'peak', projectResolver)
+            ]);
+            state.usageData.capacityGrowth = {
+                cmau: cmauMonthly,
+                connections: connMonthly,
+                connectionsByProject: connByProjectMonthly
+            };
+        } catch (e) {
+            console.warn('Monthly per-entity metric fetch failed; capacity growth unavailable:', e);
+            state.usageData.capacityGrowth = null;
+        }
+
+        // DIAGNOSTIC: dump the raw shape of each cMAU response so we can see whether LD is
+        // returning multi-column data (one column per context kind) that extractTimeSeriesData
+        // is summing. Compare against the value LD shows in its own UI. Safe to remove later.
+        const diagMauShape = (label, raw) => {
+            if (!raw) { console.log(`[mau diag ${label}]`, 'null/empty'); return; }
+            const metaLen = Array.isArray(raw.metadata) ? raw.metadata.length : 0;
+            const sample = raw.series?.[0] ?? null;
+            const lastSample = raw.series?.[raw.series.length - 1] ?? null;
+            const sampleKeys = sample && typeof sample === 'object' ? Object.keys(sample) : [];
+            console.log(`[mau diag ${label}]`, {
+                metadataLength: metaLen,
+                metadataSample: raw.metadata?.slice(0, 3) || [],
+                seriesPoints: raw.series?.length || 0,
+                firstPointKeys: sampleKeys,
+                firstPoint: sample,
+                lastPoint: lastSample
+            });
+        };
+        diagMauShape('mauBilled (unfiltered rolling_30d)', mauBilledRaw);
+        diagMauShape('mau (rolling_30d fallback)', mauData);
+        diagMauShape('cmauChargebackTotalRaw (chargeback rolling_30d)', cmauChargebackTotalRaw);
+        if (state) state.lastMauDiag = { mauBilledRaw, cmauChargebackTotalRaw };
         
         // Store experimentation data
         state.usageData.experiments = experimentationKeys;
@@ -1193,10 +1530,12 @@ function updateDashboard() {
     renderApplicationsRegistry();
     renderConnectionsPanel();
     updateCharts();
+    updateBilledCmauHistoryChart();
     updateProjectGrid();
     updateDataTable();
     renderChargebackTables();
     updateCapacityMeters();
+    updateCapacityGrowth();
     applyViewModeLayout();
 }
 
@@ -1220,8 +1559,13 @@ function renderApplicationsRegistry() {
 }
 
 function getTotalCmauPeak() {
+    // Read the same billed MTD series the headline card reads, take the snapshot value
+    // (final MTD on the snapshot day) so the Capacity meter and the headline never diverge.
+    // Falls back to the rolling-30-day series if the dedicated billed fetch wasn't available.
+    const billedSeries = extractTimeSeriesData(state.usageData.mauBilled);
+    if (billedSeries.length) return getSeriesValue(billedSeries, 'snapshot');
     const mauSeries = extractTimeSeriesData(state.usageData.mau);
-    return getSeriesValue(mauSeries, state.filters?.aggregationType || 'rolling_30d');
+    return getSeriesValue(mauSeries, 'snapshot');
 }
 
 function getTotalConnectionsPeak() {
@@ -1576,12 +1920,120 @@ function setViewMode(mode) {
             updateCharts();
         });
     }
+    if (mode === 'capacity') {
+        // Canvases only size correctly once the panel is visible.
+        requestAnimationFrame(() => {
+            updateCapacityGrowth();
+        });
+    }
     updateViewModeStatus();
+}
+
+/** Show the selected cMAU view (billing sections ↔ largest-context-kind section) and sync the switch. */
+function applyChargebackView() {
+    const view = state.chargebackView === 'largestKind' ? 'largestKind' : 'billing';
+    document.querySelectorAll('[data-cb-view]').forEach(btn => {
+        const active = btn.getAttribute('data-cb-view') === view;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const billingSections = ['chargeback-apps-section', 'chargeback-gap-section', 'chargeback-sdks-section'];
+    billingSections.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = view === 'billing' ? '' : 'none';
+    });
+    const lk = document.getElementById('chargeback-largestkind-section');
+    if (lk) lk.style.display = view === 'largestKind' ? '' : 'none';
+    if (view === 'largestKind' && state.chargeback) renderLargestKindTable();
+}
+
+/** Reflect the chosen chargeback dimension (application ↔ project) on the segmented toggle. */
+function syncChargebackDimButtons(dim) {
+    document.querySelectorAll('[data-cb-dim]').forEach(btn => {
+        const active = btn.getAttribute('data-cb-dim') === dim;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
+/**
+ * Block 2 — the "largest context kind" proportional allocation, for the selected dimension
+ * (application or project). Sourced from /usage/mau by context kind; degrades to a note (showing
+ * the metadata keys the API returned) when that breakdown isn't available.
+ */
+function renderLargestKindTable() {
+    const dim = state.chargebackDim === 'project' ? 'project' : 'app';
+    syncChargebackDimButtons(dim);
+
+    const kindData = dim === 'project'
+        ? (state.chargeback?.projectKind || { available: false, rows: [] })
+        : (state.chargeback?.appKind || { available: false, rows: [] });
+
+    const entityWord = dim === 'project' ? 'project' : 'application';
+    if (elements.chargebackLkTitle) elements.chargebackLkTitle.textContent = `Largest context kind by ${entityWord}`;
+    if (elements.chargebackLkEntityCol) elements.chargebackLkEntityCol.textContent = dim === 'project' ? 'Project' : 'Application';
+    if (elements.chargebackLkEntityWord) elements.chargebackLkEntityWord.textContent = entityWord;
+
+    const body = elements.chargebackLargestkindBody;
+    if (!body) return;
+
+    const allZero = kindData.rows.length > 0 && kindData.rows.every(r => !(r.largestValue > 0));
+
+    if (!kindData.available || !kindData.rows.length || allZero) {
+        body.innerHTML = '';
+        if (elements.chargebackLargestkindEmpty) elements.chargebackLargestkindEmpty.style.display = 'none';
+        if (elements.chargebackKindNote) {
+            elements.chargebackKindNote.style.display = 'block';
+            const d = kindData.debug || {};
+            let headline;
+            if (d.error) {
+                headline = `LaunchDarkly rejected the ${entityWord} context-kind breakdown: “${d.error}”. The billing view is unaffected.`;
+            } else if (allZero) {
+                headline = `No context-kind usage recorded for ${entityWord}s in this period.`;
+            } else {
+                headline = `Context-kind usage isn’t available for ${entityWord}s. The billing view is unaffected.`;
+            }
+            const diag = `kindsQueried=${d.kindsQueried ?? 0}, columns=${d.columns ?? 0}`;
+            const raw = state.lastCtxKindRaw?.[dim === 'project' ? 'project' : 'app'] ?? null;
+            let rawStr = 'null';
+            try { rawStr = JSON.stringify(raw, null, 2); } catch (e) { rawStr = String(raw); }
+            if (rawStr && rawStr.length > 4000) rawStr = rawStr.slice(0, 4000) + '\n… (truncated)';
+            elements.chargebackKindNote.innerHTML =
+                `${escapeHtml(headline)} <span class="muted">[${escapeHtml(diag)}]</span>` +
+                `<details style="margin-top:0.4rem;"><summary style="cursor:pointer;">Show raw per-kind responses</summary>` +
+                `<pre style="max-height:280px; overflow:auto; font-size:0.72rem; white-space:pre-wrap;">${escapeHtml(rawStr)}</pre></details>`;
+        }
+        return;
+    }
+    if (elements.chargebackKindNote) elements.chargebackKindNote.innerHTML = '';
+    if (elements.chargebackKindNote) elements.chargebackKindNote.style.display = 'none';
+    if (elements.chargebackLargestkindEmpty) elements.chargebackLargestkindEmpty.style.display = 'none';
+
+    body.innerHTML = kindData.rows.map(r => {
+        const isUnattributed = r.key === 'unknown';
+        const displayName = isUnattributed
+            ? (dim === 'project' ? 'Unattributed (no project)' : 'Unattributed (no application.id)')
+            : r.name;
+        return `
+        <tr class="${isUnattributed ? 'row-unattributed' : ''}">
+            <td>${escapeHtml(displayName)}<br><code class="cb-app-key">${escapeHtml(r.key)}</code></td>
+            <td>${r.largestKind ? escapeHtml(r.largestKind) : '<span class="muted">—</span>'}</td>
+            <td class="num">${formatNumber(r.largestValue)}</td>
+            <td class="num">${Number(r.share).toFixed(2)}%</td>
+            <td class="num">${formatNumber(r.totalAllKinds)}</td>
+        </tr>`;
+    }).join('');
 }
 
 function renderChargebackTables() {
     const { apps, gap, mauSdks } = state.chargeback || { apps: [], gap: [], mauSdks: null };
 
+    // Render the snapshot-day text into both section subtitles. Snapshot day = end of range.
+    const snapshotDay = state.dateRange?.end ? formatDateForInput(state.dateRange.end) : '—';
+    if (elements.chargebackSnapshotDay) elements.chargebackSnapshotDay.textContent = snapshotDay;
+    if (elements.chargebackSnapshotDayGap) elements.chargebackSnapshotDayGap.textContent = snapshotDay;
+
+    // ---- Block 1: billing (primary-context cMAU by application) ----
     if (elements.chargebackAppsBody) {
         const metaEl = document.getElementById('chargeback-apps-meta');
         const hideZero = document.getElementById('hide-zero-cmau-apps')?.checked;
@@ -1600,7 +2052,7 @@ function renderChargebackTables() {
                 elements.chargebackAppsEmpty.style.display = 'block';
                 elements.chargebackAppsEmpty.textContent = hideZero && apps.length
                     ? 'No applications have attributed cMAU for this period. Uncheck "Hide unused" to see all registered apps.'
-                    : 'No application-level cMAU data for this period. Confirm SDKs send application.id and that the groupBy endpoint is available on your plan.';
+                    : 'No application-level cMAU for this period. Confirm SDKs send application.id and that grouped usage is available on your plan.';
             }
             elements.chargebackAppsBody.innerHTML = '';
         } else {
@@ -1629,6 +2081,9 @@ function renderChargebackTables() {
             }).join('');
         }
     }
+
+    // ---- Block 2: largest context kind — proportional allocation ----
+    renderLargestKindTable();
 
     if (elements.chargebackGapBody) {
         if (!gap.length) {
@@ -1664,6 +2119,8 @@ function renderChargebackTables() {
             `).join('');
         }
     }
+
+    applyChargebackView();
 }
 
 function updateCapacityMeters() {
@@ -1730,16 +2187,18 @@ function updateSummaryCards() {
     const { start, end } = state.dateRange;
     const periodText = `${formatDate(start)} - ${formatDate(end)}`;
 
-    // Billed cMAU = peak of the unfiltered rolling-30-day series. Falls back to the user-filtered
-    // series only if the dedicated billed fetch wasn't available.
+    // Billed cMAU = MTD value on the snapshot day (last day of the selected month, clamped to
+    // today for the current partial month). This is the LD-authoritative billing basis, not
+    // the rolling-30-day peak. Falls back to the rolling-30-day series if the dedicated fetch
+    // wasn't available.
     const billedSeries = extractTimeSeriesData(state.usageData.mauBilled);
     const filteredSeries = extractTimeSeriesData(state.usageData.mau);
     const sourceSeries = billedSeries.length ? billedSeries : filteredSeries;
-    const totalMau = sourceSeries.reduce((max, point) => Math.max(max, point.value), 0);
+    const totalMau = getSeriesValue(sourceSeries, 'snapshot');
     elements.totalCmau.textContent = formatNumber(totalMau);
     elements.cmauPeriod.textContent = billedSeries.length
-        ? 'Peak rolling 30-day · billed cMAU'
-        : 'Peak rolling 30-day · (filtered fallback)';
+        ? 'Month-to-date on snapshot day · billed cMAU'
+        : 'Month-to-date on snapshot day · (filtered fallback)';
 
     // Calculate total connections
     let totalConnections = 0;
@@ -2145,7 +2604,11 @@ function getPeakValue(series = []) {
 }
 
 /**
- * Return the billing-correct value from a time series array based on aggregation type.
+ * Return the relevant value from a time series array based on extraction mode.
+ *
+ * snapshot: return the value of the LAST point (the snapshot day). Used for chargeback
+ * math per chargebackspec.md — env totals and per-app values are pulled as the rolling
+ * 30-day cMAU as of a single snapshot day so they reconcile to the invoice for that day.
  *
  * daily_incremental: sum all points — the API returns per-day counts, so summing
  * gives the total over the selected period.
@@ -2157,6 +2620,12 @@ function getPeakValue(series = []) {
  */
 function getSeriesValue(series, aggregationType) {
     if (!Array.isArray(series) || series.length === 0) return 0;
+    if (aggregationType === 'snapshot') {
+        // Use the last point — assumes the series is ordered ascending by date, which the
+        // upstream extractTimeSeriesData / groupedUsageToColumns produce.
+        const last = series[series.length - 1];
+        return Number(last && last.value) || 0;
+    }
     if (aggregationType === 'daily_incremental') {
         return series.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
     }
@@ -2248,6 +2717,82 @@ function horizontalLineDataset(label, color, yValue, refSeries) {
 /**
  * Compute a running max series over a time-ordered array of {date, value}.
  */
+/**
+ * Given a daily MTD series (each point = MTD unique cMAU as of that day), return an array of
+ * per-month billed values: for each calendar month covered by the series, take the value on
+ * the LAST day the API returned for that month (= month-end MTD for complete months, partial
+ * MTD for the current month).
+ */
+function deriveMonthEndBilledCmau(series) {
+    if (!Array.isArray(series) || series.length === 0) return [];
+    const sorted = [...series].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const byMonth = new Map();
+    sorted.forEach(p => {
+        const d = p.date instanceof Date ? p.date : new Date(p.date);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        // Because sorted ascending, later overwrites earlier — final overwrite = last day seen.
+        byMonth.set(key, { date: d, value: Number(p.value) || 0 });
+    });
+    const now = new Date();
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return [...byMonth.entries()].map(([key, { date, value }]) => ({
+        monthKey: key,
+        monthLabel: new Date(date.getFullYear(), date.getMonth(), 1)
+            .toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+        cmau: value,
+        isPartial: key === currentKey
+    }));
+}
+
+/**
+ * Project org cMAU forward from completed-month history using a rolling 3-month average
+ * month-over-month growth ratio (per chargebackspec.md). Extrapolates until the value
+ * reaches `contractedLimit` (recording the breach month) or `maxForward` months elapse.
+ *
+ * @param {{monthKey:string, monthLabel:string, value:number}[]} monthEndValues completed months, oldest→newest
+ * @param {number|null} contractedLimit
+ * @returns {{ projected:{monthKey,monthLabel,value}[], breachMonthLabel:string|null, monthsToBreach:number|null, avgGrowthPct:number|null }}
+ */
+function projectCmauRunRate(monthEndValues, contractedLimit, maxForward = 12) {
+    const clean = (monthEndValues || []).filter(m => Number.isFinite(m.value) && m.value > 0);
+    const empty = { projected: [], breachMonthLabel: null, monthsToBreach: null, avgGrowthPct: null, alreadyOver: false };
+    if (clean.length < 2) return empty;
+
+    // Average the last (up to) 3 month-over-month ratios.
+    const ratios = [];
+    for (let i = Math.max(1, clean.length - 3); i < clean.length; i++) {
+        const prev = clean[i - 1].value;
+        if (prev > 0) ratios.push(clean[i].value / prev);
+    }
+    if (!ratios.length) return empty;
+    const r = ratios.reduce((s, x) => s + x, 0) / ratios.length;
+    const avgGrowthPct = (r - 1) * 100;
+
+    const last = clean[clean.length - 1];
+    const [ly, lm] = last.monthKey.split('-').map(Number);
+    const hasLimit = Number.isFinite(contractedLimit) && contractedLimit > 0;
+    // Already at/over the limit on the latest actual month — there's no future breach to project.
+    const alreadyOver = hasLimit && last.value >= contractedLimit;
+
+    const projected = [];
+    let value = last.value;
+    let breachMonthLabel = null;
+    let monthsToBreach = null;
+    for (let step = 1; step <= maxForward; step++) {
+        value = value * r;
+        const d = new Date(ly, (lm - 1) + step, 1);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const monthLabel = d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
+        projected.push({ monthKey, monthLabel, value });
+        if (hasLimit && !alreadyOver && breachMonthLabel === null && value >= contractedLimit) {
+            breachMonthLabel = monthLabel;
+            monthsToBreach = step;
+            break;
+        }
+    }
+    return { projected, breachMonthLabel, monthsToBreach, avgGrowthPct, alreadyOver };
+}
+
 function runningMaxSeries(series) {
     const sorted = [...series].sort((a, b) => new Date(a.date) - new Date(b.date));
     let max = 0;
@@ -2278,7 +2823,7 @@ function appendThresholdDatasets(datasets, limitInputEl, refSeries, labels = {})
     const contractedLabel = labels.contracted || 'Contracted limit';
     const warn = horizontalLineDataset(`${contractedLabel}`, '#FF35A2', limit, refSeries);
     const t90 = horizontalLineDataset('90% threshold', '#FF9D29', limit * 0.9, refSeries);
-    const t70 = horizontalLineDataset('70% threshold', '#EBFF38', limit * 0.7, refSeries);
+    const t70 = horizontalLineDataset('70% threshold', '#3FB950', limit * 0.7, refSeries);
     [warn, t90, t70].forEach(ds => { if (ds) datasets.push(ds); });
 }
 
@@ -2343,7 +2888,7 @@ function updateCmauChart() {
     const dailyByDay = dailyIncrementalSeries.length ? aggregateByDay(dailyIncrementalSeries) : [];
     const cumulativeSeries = dailyByDay.length ? runningSumSeries(dailyByDay) : [];
 
-    // Secondary: the unfiltered billed rolling-30-day series. Falls back to the user-filtered
+    // Secondary: the unfiltered billed rolling-30-day series. Falls back to the rolling-30-day
     // mau series, then to per-project aggregates if neither is available.
     let rollingSeries = extractTimeSeriesData(state.usageData.mauBilled);
     if (rollingSeries.length === 0) {
@@ -2376,7 +2921,7 @@ function updateCmauChart() {
     }
     if (rollingSeries.length) {
         // Secondary line: show the billed metric for comparison.
-        datasets.push(lineDataset('Rolling 30-day cMAU (billed)', '#7084FF', rollingSeries, {
+        datasets.push(lineDataset('Month-to-date cMAU (billed)', '#7084FF', rollingSeries, {
             dashed: true
         }));
     }
@@ -2399,6 +2944,441 @@ function updateCmauChart() {
  *
  * Optional threshold overlays when a contracted connections limit is set.
  */
+
+/**
+ * Render the "Billed cMAU by month" bar chart on the Overview panel.
+ * Each bar = month-end MTD cMAU for that calendar month. The current month is highlighted
+ * (partial data). Overlays contracted-limit + 70/90% threshold lines when a cMAU limit is set.
+ */
+function updateBilledCmauHistoryChart() {
+    const raw = state.usageData.mauMtdYear;
+    console.log('[billedCmauHistory diag]', {
+        canvasExists: !!elements.billedCmauHistoryChart,
+        rawIsNull: raw === null || raw === undefined,
+        rawHasSeries: !!(raw && Array.isArray(raw.series)),
+        rawSeriesLen: raw?.series?.length || 0,
+        rawMetadataLen: raw?.metadata?.length || 0,
+        rawFirstPoint: raw?.series?.[0] || null,
+        rawLastPoint: raw?.series?.[raw?.series?.length - 1] || null
+    });
+    if (!elements.billedCmauHistoryChart) return;
+    const series = extractTimeSeriesData(raw);
+    const months = deriveMonthEndBilledCmau(series);
+    console.log('[billedCmauHistory diag] parsed', {
+        extractedSeriesLen: series.length,
+        derivedMonthsCount: months.length,
+        firstMonth: months[0] || null,
+        lastMonth: months[months.length - 1] || null
+    });
+
+    if (state.charts.billedCmauHistory) {
+        state.charts.billedCmauHistory.destroy();
+        state.charts.billedCmauHistory = null;
+    }
+    if (!months.length) {
+        if (elements.billedCmauHistoryEmpty) elements.billedCmauHistoryEmpty.style.display = 'block';
+        return;
+    }
+    if (elements.billedCmauHistoryEmpty) elements.billedCmauHistoryEmpty.style.display = 'none';
+
+    // Take at most 12 most-recent months.
+    const trimmed = months.slice(-12);
+    const labels = trimmed.map(m => m.isPartial ? `${m.monthLabel} (MTD)` : m.monthLabel);
+    const values = trimmed.map(m => m.cmau);
+    const colors = trimmed.map(m => m.isPartial ? '#FF9D29' : '#405BFF');
+
+    const datasets = [{
+        label: 'Billed cMAU (month-end MTD)',
+        data: values,
+        backgroundColor: colors,
+        borderColor: colors,
+        borderWidth: 1
+    }];
+
+    // Threshold overlay lines if a contracted limit is set.
+    const limit = parseFloat(elements.capacityCmauLimit?.value);
+    if (Number.isFinite(limit) && limit > 0) {
+        const flatLine = (label, color, y, dash) => ({
+            label,
+            type: 'line',
+            data: labels.map(() => y),
+            borderColor: color,
+            backgroundColor: color,
+            borderDash: dash,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false
+        });
+        datasets.push(flatLine('Contracted limit', '#FF35A2', limit, [4, 4]));
+        datasets.push(flatLine('90% threshold', '#FF9D29', limit * 0.9, [4, 4]));
+        datasets.push(flatLine('70% threshold', '#3FB950', limit * 0.7, [4, 4]));
+    }
+
+    const ctx = elements.billedCmauHistoryChart.getContext('2d');
+    state.charts.billedCmauHistory = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, labels: { color: '#8B91B5' } },
+                tooltip: {
+                    backgroundColor: '#171B35',
+                    titleColor: '#F0F2FF',
+                    bodyColor: '#F0F2FF',
+                    borderColor: '#252A4A',
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: (item) => `${item.dataset.label}: ${formatNumber(item.parsed.y)}`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: '#1A1F3C', drawBorder: false },
+                    ticks: { color: '#8B91B5' }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: { color: '#1A1F3C', drawBorder: false },
+                    ticks: { color: '#8B91B5', callback: (value) => formatNumber(value) }
+                }
+            }
+        }
+    });
+}
+
+// ==========================================
+// Capacity growth · run-rate projection · contributor attribution
+// ==========================================
+
+/**
+ * Shared Chart.js options for the capacity category-axis charts (dark theme, formatNumber ticks).
+ */
+function capacityCategoryOptions({ stacked = false } = {}) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+            legend: { display: true, labels: { color: '#8B91B5', boxWidth: 12 } },
+            tooltip: {
+                backgroundColor: '#171B35',
+                titleColor: '#F0F2FF',
+                bodyColor: '#F0F2FF',
+                borderColor: '#252A4A',
+                borderWidth: 1,
+                padding: 12,
+                callbacks: {
+                    label: (item) => `${item.dataset.label}: ${formatNumber(item.parsed.y)}`
+                }
+            }
+        },
+        scales: {
+            x: {
+                stacked,
+                grid: { color: '#1A1F3C', drawBorder: false },
+                ticks: { color: '#8B91B5' }
+            },
+            y: {
+                stacked,
+                beginAtZero: true,
+                grid: { color: '#1A1F3C', drawBorder: false },
+                ticks: { color: '#8B91B5', callback: (value) => formatNumber(value) }
+            }
+        }
+    };
+}
+
+/** Rolling 3-month growth % for a single app's month-by-month values (completed months only). */
+function appThreeMonthGrowthPct(app, completedMonthKeys) {
+    const vals = completedMonthKeys.map(k => app.byMonth[k]).filter(v => Number.isFinite(v) && v > 0);
+    if (vals.length < 2) return null;
+    const ratios = [];
+    for (let i = Math.max(1, vals.length - 3); i < vals.length; i++) {
+        if (vals[i - 1] > 0) ratios.push(vals[i] / vals[i - 1]);
+    }
+    if (!ratios.length) return null;
+    return (ratios.reduce((s, x) => s + x, 0) / ratios.length - 1) * 100;
+}
+
+// Metric config for the Capacity growth/projection/contributor toggle.
+const CAPACITY_METRICS = {
+    cmau: {
+        label: 'Client MAU',
+        unit: 'cMAU',
+        histLabel: 'cMAU (month-end)',
+        contribLabel: 'cMAU by application',
+        latestCol: 'Latest cMAU',
+        limitEl: () => elements.capacityCmauLimit
+    },
+    connections: {
+        label: 'Service connections',
+        unit: 'connections',
+        histLabel: 'Service connections (peak)',
+        contribLabel: 'connections by application',
+        latestCol: 'Peak connections',
+        limitEl: () => elements.capacityConnLimit
+    }
+};
+
+function activeCapacityMetric() {
+    return state.capacityMetric === 'connections' ? 'connections' : 'cmau';
+}
+
+/** Completed-month org series (partial current month excluded) from the reliable per-month data. */
+function buildCompletedOrgMonths(metricData) {
+    if (!metricData || !metricData.months?.length) return [];
+    return metricData.months
+        .filter(m => !m.isPartial)
+        .map(m => ({ monthKey: m.monthKey, monthLabel: m.monthLabel, value: metricData.orgByMonth[m.monthKey] || 0 }));
+}
+
+function buildProjectionSubtitle(proj, hasLimit, meta) {
+    if (proj.avgGrowthPct === null) {
+        return `Not enough completed-month ${meta.unit} history to compute a run rate yet.`;
+    }
+    const growth = `Run rate: ${proj.avgGrowthPct >= 0 ? '+' : ''}${proj.avgGrowthPct.toFixed(1)}%/mo (rolling 3-mo avg).`;
+    if (!hasLimit) {
+        return `${growth} Set a contracted ${meta.label.toLowerCase()} limit in Configuration to estimate the breach month.`;
+    }
+    if (proj.alreadyOver) {
+        if (proj.avgGrowthPct > 0) {
+            return `${growth} Already over the contracted limit and still climbing.`;
+        }
+        if (proj.avgGrowthPct < 0) {
+            return `${growth} Over the contracted limit but trending down.`;
+        }
+        return `${growth} Currently over the contracted limit.`;
+    }
+    if (proj.breachMonthLabel) {
+        return `${growth} Projected to reach the contracted limit in ${proj.breachMonthLabel} (~${proj.monthsToBreach} month${proj.monthsToBreach === 1 ? '' : 's'}).`;
+    }
+    if (proj.avgGrowthPct <= 0) {
+        return `${growth} Flat or declining — no projected breach within 12 months.`;
+    }
+    return `${growth} Not projected to reach the contracted limit within the next 12 months.`;
+}
+
+/** Reflect the active selection on a group of data-attributed toggle buttons/cards. */
+function syncCapacityToggle(attr, value) {
+    document.querySelectorAll(`[${attr}]`).forEach(btn => {
+        const active = btn.getAttribute(attr) === value;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
+/**
+ * Render the Capacity-panel growth + projection line chart, the contributor stacked chart, and
+ * the growth summary table for the currently selected metric (cMAU or service connections).
+ * Service connections additionally support a by-application / by-project contributor grouping.
+ * All series come from state.usageData.capacityGrowth, fetched month-by-month. Safe to call
+ * before data exists (renders empty states).
+ */
+function updateCapacityGrowth() {
+    const metric = activeCapacityMetric();
+    const meta = CAPACITY_METRICS[metric];
+    const cg = state.usageData.capacityGrowth;
+    const metricData = cg ? cg[metric] : null;
+
+    const limit = parseFloat(meta.limitEl()?.value);
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const completed = buildCompletedOrgMonths(metricData);
+
+    // Contributor grouping: only service connections support a by-project breakdown
+    // (per-project cMAU is unavailable on most plans).
+    const supportsProject = metric === 'connections';
+    const group = supportsProject ? state.capacityConnGroup : 'app';
+    const contribData = (supportsProject && group === 'project')
+        ? (cg ? cg.connectionsByProject : null)
+        : metricData;
+    const entityNoun = group === 'project' ? 'project' : 'application';
+
+    syncCapacityToggle('data-cap-metric', metric);
+    syncCapacityToggle('data-cap-group', group);
+    if (elements.capacityGroupToggle) elements.capacityGroupToggle.style.display = supportsProject ? '' : 'none';
+    if (elements.capacityContribMetricLabel) elements.capacityContribMetricLabel.textContent = `${meta.unit} by ${entityNoun}`;
+    if (elements.capacityGrowthLatestCol) elements.capacityGrowthLatestCol.textContent = meta.latestCol;
+    if (elements.capacityGrowthEntityCol) elements.capacityGrowthEntityCol.textContent = entityNoun === 'project' ? 'Project' : 'Application';
+
+    renderCapacityGrowthChart(completed, hasLimit ? limit : null, meta);
+    renderCapacityContribChart(contribData, meta, entityNoun);
+    renderCapacityGrowthTable(contribData, meta, entityNoun);
+}
+
+function renderCapacityGrowthChart(completed, limit, meta) {
+    if (!elements.capacityGrowthChart) return;
+    if (state.charts.capacityGrowth) {
+        state.charts.capacityGrowth.destroy();
+        state.charts.capacityGrowth = null;
+    }
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const subtitleEl = elements.capacityGrowthSubtitle;
+
+    if (completed.length < 2) {
+        if (elements.capacityGrowthEmpty) elements.capacityGrowthEmpty.style.display = 'block';
+        if (subtitleEl) subtitleEl.textContent = `Not enough completed-month ${meta.unit} history to project a run rate yet.`;
+        return;
+    }
+    if (elements.capacityGrowthEmpty) elements.capacityGrowthEmpty.style.display = 'none';
+
+    const proj = projectCmauRunRate(completed, hasLimit ? limit : null);
+    const histLabels = completed.map(m => m.monthLabel);
+    const projLabels = proj.projected.map(m => m.monthLabel);
+    const labels = [...histLabels, ...projLabels];
+
+    // Historical solid line (null-padded through the projected region).
+    const historicalDataset = {
+        label: meta.histLabel,
+        data: [...completed.map(m => m.value), ...projLabels.map(() => null)],
+        borderColor: '#405BFF',
+        backgroundColor: '#405BFF',
+        borderWidth: 2,
+        pointRadius: 3,
+        fill: false,
+        spanGaps: false
+    };
+    // Projected dashed line: anchor at the last historical point, then future values.
+    const projData = histLabels.map((_, i) => i === histLabels.length - 1 ? completed[completed.length - 1].value : null);
+    proj.projected.forEach(m => projData.push(m.value));
+    const projectedDataset = {
+        label: 'Projected (run rate)',
+        data: projData,
+        borderColor: '#7084FF',
+        backgroundColor: '#7084FF',
+        borderWidth: 2,
+        borderDash: [6, 4],
+        pointRadius: 3,
+        fill: false,
+        spanGaps: true
+    };
+
+    const datasets = [historicalDataset, projectedDataset];
+    if (hasLimit) {
+        const flatLine = (label, color, y) => ({
+            label, type: 'line', data: labels.map(() => y),
+            borderColor: color, backgroundColor: color, borderDash: [4, 4],
+            borderWidth: 1.5, pointRadius: 0, fill: false
+        });
+        datasets.push(flatLine('Contracted limit', '#FF35A2', limit));
+        datasets.push(flatLine('90% threshold', '#FF9D29', limit * 0.9));
+        datasets.push(flatLine('70% threshold', '#3FB950', limit * 0.7));
+    }
+
+    if (subtitleEl) subtitleEl.textContent = buildProjectionSubtitle(proj, hasLimit, meta);
+
+    const ctx = elements.capacityGrowthChart.getContext('2d');
+    state.charts.capacityGrowth = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: capacityCategoryOptions()
+    });
+}
+
+function renderCapacityContribChart(contribData, meta, entityNoun) {
+    if (!elements.capacityContribChart) return;
+    if (state.charts.capacityContrib) {
+        state.charts.capacityContrib.destroy();
+        state.charts.capacityContrib = null;
+    }
+    if (!contribData || !contribData.months?.length || !contribData.apps?.length) {
+        if (elements.capacityContribEmpty) elements.capacityContribEmpty.style.display = 'block';
+        return;
+    }
+    if (elements.capacityContribEmpty) elements.capacityContribEmpty.style.display = 'none';
+
+    const metricData = contribData;
+    const months = metricData.months;
+    const labels = months.map(m => m.isPartial ? `${m.monthLabel} (MTD)` : m.monthLabel);
+    const palette = ['#405BFF', '#3DD6F5', '#A34FDE', '#FF35A2', '#FF9D29', '#A9FF5E', '#7084FF', '#EBFF38'];
+    const TOP_N = 8;
+    const top = metricData.apps.slice(0, TOP_N);
+    const rest = metricData.apps.slice(TOP_N);
+
+    const datasets = top.map((app, i) => ({
+        label: app.name,
+        data: months.map(m => app.byMonth[m.monthKey] || 0),
+        backgroundColor: palette[i % palette.length],
+        borderWidth: 0,
+        stack: 'metric'
+    }));
+    if (rest.length) {
+        datasets.push({
+            label: `Other (${rest.length})`,
+            data: months.map(m => rest.reduce((s, app) => s + (app.byMonth[m.monthKey] || 0), 0)),
+            backgroundColor: '#4A5178',
+            borderWidth: 0,
+            stack: 'metric'
+        });
+    }
+
+    const ctx = elements.capacityContribChart.getContext('2d');
+    state.charts.capacityContrib = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: capacityCategoryOptions({ stacked: true })
+    });
+}
+
+function renderCapacityGrowthTable(contribData, meta, entityNoun) {
+    const body = elements.capacityGrowthTableBody;
+    if (!body) return;
+    const note = elements.capacityGrowthGapNote;
+    const metricData = contribData;
+
+    if (!metricData || !metricData.months?.length || !metricData.apps?.length) {
+        body.innerHTML = '';
+        if (elements.capacityGrowthTableEmpty) elements.capacityGrowthTableEmpty.style.display = 'block';
+        if (note) note.textContent = '';
+        return;
+    }
+    if (elements.capacityGrowthTableEmpty) elements.capacityGrowthTableEmpty.style.display = 'none';
+
+    const completedKeys = metricData.months.filter(m => !m.isPartial).map(m => m.monthKey);
+    const latestKey = metricData.months[metricData.months.length - 1].monthKey;
+    const latestLabel = metricData.months[metricData.months.length - 1].monthLabel;
+    const orgTotal = metricData.orgByMonth[latestKey] || 0;
+
+    const growthCell = (pct) => {
+        if (pct === null) return '<span class="muted">—</span>';
+        const cls = pct > 0 ? 'is-up' : (pct < 0 ? 'is-down' : '');
+        return `<span class="${cls}">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</span>`;
+    };
+
+    body.innerHTML = metricData.apps.map(app => {
+        const latest = app.byMonth[latestKey] || 0;
+        const pct = appThreeMonthGrowthPct(app, completedKeys);
+        const share = orgTotal > 0 ? (latest / orgTotal) * 100 : 0;
+        return `<tr>
+            <td>${escapeHtml(app.name)}</td>
+            <td class="num">${formatNumber(latest)}</td>
+            <td class="num">${growthCell(pct)}</td>
+            <td class="num">${share.toFixed(1)}%</td>
+        </tr>`;
+    }).join('');
+
+    // Attribution footnote: how much of the latest month is unattributed (the Unknown bucket).
+    if (note) {
+        const unknown = metricData.apps.find(a => String(a.key).toLowerCase() === 'unknown');
+        const unattr = unknown ? (unknown.byMonth[latestKey] || 0) : 0;
+        const cause = entityNoun === 'project'
+            ? 'not attributed to a project'
+            : 'unattributed — SDKs not sending application.id at init';
+        if (orgTotal > 0 && unattr > 0) {
+            const pct = (unattr / orgTotal) * 100;
+            note.textContent = `${formatNumber(unattr)} of ${formatNumber(orgTotal)} ${meta.unit} (${pct.toFixed(1)}%) on ${latestLabel} is ${cause}.`;
+        } else if (orgTotal > 0) {
+            note.textContent = `All ${meta.unit} on ${latestLabel} is attributed to ${entityNoun === 'project' ? 'a project' : 'an application'}.`;
+        } else {
+            note.textContent = '';
+        }
+    }
+}
+
 function updateConnectionsChart() {
     const chartType = elements.connectionsChartType.value;
 
@@ -2669,24 +3649,42 @@ function exportToCsv() {
     document.body.removeChild(link);
 }
 
+// Block 1 — billing: primary-context cMAU by application.
 function exportChargebackAppsCsv() {
     const rows = state.chargeback?.apps || [];
     if (!rows.length) {
         showError('No chargeback application rows to export.');
         return;
     }
-    const header = ['applicationKey', 'name', 'kind', 'peakCmau', 'sharePercentOrg'];
+    const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const header = ['applicationKey', 'name', 'kind', 'cmau', 'sharePercentOrg'];
     const lines = [
         header.join(','),
-        ...rows.map(r => [
-            `"${String(r.key).replace(/"/g, '""')}"`,
-            `"${String(r.name).replace(/"/g, '""')}"`,
-            `"${String(r.kind).replace(/"/g, '""')}"`,
-            r.peak,
-            r.share.toFixed(4)
+        ...rows.map(r => [q(r.key), q(r.name), q(r.kind), r.peak, r.share.toFixed(4)].join(','))
+    ].join('\n');
+    downloadTextFile(lines, `ld-chargeback-billing-apps-${formatDateForInput(new Date())}.csv`);
+}
+
+// Block 2 — largest context kind proportional allocation, for the active dimension.
+function exportChargebackLargestKindCsv() {
+    const dim = state.chargebackDim === 'project' ? 'project' : 'app';
+    const kindData = dim === 'project'
+        ? (state.chargeback?.projectKind || { available: false, rows: [] })
+        : (state.chargeback?.appKind || { available: false, rows: [] });
+    if (!kindData.available || !kindData.rows.length) {
+        showError('No largest-context-kind rows to export (MAU-by-context-kind unavailable).');
+        return;
+    }
+    const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const entityCol = dim === 'project' ? 'projectKey' : 'applicationKey';
+    const header = [entityCol, 'largestContextKind', 'largestKindContextUsages', 'proportionalSharePercent', 'totalAllKinds'];
+    const lines = [
+        header.join(','),
+        ...kindData.rows.map(r => [
+            q(r.key), q(r.largestKind || ''), r.largestValue, r.share.toFixed(4), r.totalAllKinds
         ].join(','))
     ].join('\n');
-    downloadTextFile(lines, `ld-chargeback-apps-${formatDateForInput(new Date())}.csv`);
+    downloadTextFile(lines, `ld-chargeback-largestkind-${dim === 'project' ? 'projects' : 'apps'}-${formatDateForInput(new Date())}.csv`);
 }
 
 function exportChargebackGapCsv() {
@@ -2732,6 +3730,64 @@ function exportConnectionsByAppCsv() {
         ].join(','))
     ].join('\n');
     downloadTextFile(lines, `ld-connections-by-app-${formatDateForInput(new Date())}.csv`);
+}
+
+function exportCapacityGrowthCsv() {
+    const metric = activeCapacityMetric();
+    const meta = CAPACITY_METRICS[metric];
+    const cg = state.usageData.capacityGrowth;
+    const metricData = cg ? cg[metric] : null;
+    // Follow the active contributor grouping (connections support by-project).
+    const group = metric === 'connections' ? state.capacityConnGroup : 'app';
+    const contribData = (group === 'project') ? (cg ? cg.connectionsByProject : null) : metricData;
+    const entityCol = group === 'project' ? 'Project' : 'Application';
+    if (!metricData || !metricData.months?.length || !contribData || !contribData.apps?.length) {
+        showError('No capacity growth data to export. Fetch usage data first.');
+        return;
+    }
+    const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const months = contribData.months;
+    const completedKeys = months.filter(m => !m.isPartial).map(m => m.monthKey);
+
+    const lines = [];
+    lines.push([q(`Metric: ${meta.label} (${metric === 'cmau' ? 'month-end' : 'peak'}) · grouped by ${entityCol.toLowerCase()}`)].join(','));
+    lines.push('');
+
+    // Section 1: month × entity matrix (+ org total per month).
+    lines.push([entityCol, ...months.map(m => m.isPartial ? `${m.monthLabel} (MTD)` : m.monthLabel), '3-mo growth %'].map(q).join(','));
+    contribData.apps.forEach(app => {
+        const pct = appThreeMonthGrowthPct(app, completedKeys);
+        lines.push([
+            q(app.name),
+            ...months.map(m => Math.round(app.byMonth[m.monthKey] || 0)),
+            pct === null ? '' : pct.toFixed(1)
+        ].join(','));
+    });
+    lines.push([
+        q('Org total'),
+        ...months.map(m => Math.round(contribData.orgByMonth[m.monthKey] || 0)),
+        ''
+    ].join(','));
+
+    // Section 2: org completed-month series + run-rate projection (always the metric total).
+    const completed = buildCompletedOrgMonths(metricData);
+    const limit = parseFloat(meta.limitEl()?.value);
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const proj = projectCmauRunRate(completed, hasLimit ? limit : null);
+
+    lines.push('');
+    lines.push([q('Month'), q(meta.histLabel), q('Type')].join(','));
+    completed.forEach(m => lines.push([q(m.monthLabel), Math.round(m.value), q('actual')].join(',')));
+    proj.projected.forEach(m => lines.push([q(m.monthLabel), Math.round(m.value), q('projected')].join(',')));
+
+    lines.push('');
+    lines.push([q(`Contracted ${meta.unit} limit`), hasLimit ? Math.round(limit) : ''].join(','));
+    lines.push([q('Rolling 3-mo growth %/mo'), proj.avgGrowthPct === null ? '' : proj.avgGrowthPct.toFixed(1)].join(','));
+    lines.push([q('Projected breach month'), q(proj.breachMonthLabel || 'n/a')].join(','));
+    lines.push([q('Months to breach'), proj.monthsToBreach ?? ''].join(','));
+
+    const suffix = group === 'project' ? `${metric}-by-project` : metric;
+    downloadTextFile(lines.join('\n'), `launchdarkly-capacity-${suffix}-${formatDateForInput(new Date())}.csv`);
 }
 
 function downloadTextFile(content, filename) {
@@ -2788,6 +3844,8 @@ function initEventListeners() {
         updateSummaryCards();
         // Refresh charts so threshold overlay lines update immediately.
         if (typeof updateCharts === 'function') updateCharts();
+        // Recompute the growth projection / breach month against the new limit.
+        if (typeof updateCapacityGrowth === 'function') updateCapacityGrowth();
     };
     elements.capacityCmauLimit?.addEventListener('input', persistCap);
     elements.capacityConnLimit?.addEventListener('input', persistCap);
@@ -2795,6 +3853,56 @@ function initEventListeners() {
     elements.exportChargebackApps?.addEventListener('click', exportChargebackAppsCsv);
     elements.exportChargebackGap?.addEventListener('click', exportChargebackGapCsv);
     elements.exportConnectionsByApp?.addEventListener('click', exportConnectionsByAppCsv);
+    elements.exportCapacityGrowth?.addEventListener('click', exportCapacityGrowthCsv);
+
+    elements.exportChargebackLargestkind?.addEventListener('click', exportChargebackLargestKindCsv);
+
+    // Top-level cMAU view switch (Billing ↔ Largest context kind).
+    document.querySelectorAll('[data-cb-view]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const view = btn.getAttribute('data-cb-view');
+            if (!view || view === state.chargebackView) return;
+            state.chargebackView = view;
+            applyChargebackView();
+        });
+    });
+
+    // Largest-context-kind dimension toggle (by application ↔ by project) — re-renders Block 2 only.
+    document.querySelectorAll('[data-cb-dim]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const dim = btn.getAttribute('data-cb-dim');
+            if (!dim || dim === state.chargebackDim) return;
+            state.chargebackDim = dim;
+            renderLargestKindTable();
+        });
+    });
+
+    // The two utilization meter cards double as the metric selector for the growth /
+    // projection / contributor views below (cMAU ↔ service connections).
+    const selectCapacityMetric = (metric) => {
+        if (!metric || metric === state.capacityMetric) return;
+        state.capacityMetric = metric;
+        updateCapacityGrowth();
+    };
+    document.querySelectorAll('[data-cap-metric]').forEach(card => {
+        card.addEventListener('click', () => selectCapacityMetric(card.getAttribute('data-cap-metric')));
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                selectCapacityMetric(card.getAttribute('data-cap-metric'));
+            }
+        });
+    });
+
+    // Connections contributor grouping (by application ↔ by project).
+    document.querySelectorAll('[data-cap-group]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const group = btn.getAttribute('data-cap-group');
+            if (!group || group === state.capacityConnGroup) return;
+            state.capacityConnGroup = group;
+            updateCapacityGrowth();
+        });
+    });
 
     document.getElementById('hide-zero-cmau-apps')?.addEventListener('change', () => {
         renderChargebackTables();
@@ -2818,16 +3926,23 @@ function initEventListeners() {
         }
     });
     
-    // Date preset change
-    elements.datePreset.addEventListener('change', () => {
-        const isCustom = elements.datePreset.value === 'custom';
+    // Billing-month change
+    elements.billingMonth.addEventListener('change', () => {
+        const isCustom = elements.billingMonth.value === 'custom';
         elements.customDates.style.display = isCustom ? 'flex' : 'none';
-        
+
         if (!isCustom) {
-            // Update dates based on preset
+            // Update the (hidden) start/end date inputs so they reflect the month selection.
             const { start, end } = getDateRange();
             elements.startDate.value = formatDateForInput(start);
             elements.endDate.value = formatDateForInput(end);
+            // Auto-fetch on month change if we already have a token — saves the user a click.
+            // (Custom range still needs an explicit Fetch since both dates have to be picked first.)
+            const apiKey = elements.apiKeyInput.value.trim();
+            if (apiKey) {
+                state.apiKey = apiKey;
+                fetchAllUsageData();
+            }
         }
     });
     
@@ -2894,10 +4009,11 @@ function initTheme() {
  * Initialize date inputs with defaults
  */
 function initDateInputs() {
+    populateBillingMonthOptions();
     const { start, end } = getDateRange();
     elements.startDate.value = formatDateForInput(start);
     elements.endDate.value = formatDateForInput(end);
-    
+
     // Set max date to today
     const today = formatDateForInput(new Date());
     elements.startDate.max = today;

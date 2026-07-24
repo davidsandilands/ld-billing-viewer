@@ -682,6 +682,162 @@ select {
     color: var(--text-muted);
 }
 
+/* Growth deltas in the capacity growth summary table: positive = green, negative = red. */
+.data-table .is-up {
+    color: #2FA65A;
+    font-weight: 600;
+}
+.data-table .is-down {
+    color: #FF5C57;
+    font-weight: 600;
+}
+
+/* Chargeback: explainer, model legend, basis toggle, comparison columns */
+.chargeback-explainer {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+.chargeback-explainer p { margin: 0 0 0.5rem; }
+.chargeback-model-legend {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.chargeback-model-legend strong { color: var(--text-primary); }
+
+/* Top-level cMAU view switch (Billing ↔ Largest context kind) */
+.chargeback-view-switch {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: var(--space-lg);
+}
+.cb-view-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    text-align: left;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.cb-view-btn:hover { border-color: var(--accent-primary); }
+.cb-view-btn.active {
+    border-color: var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-secondary));
+    color: var(--text-primary);
+}
+.cb-view-title {
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.cb-view-sub { font-size: 0.72rem; color: var(--text-muted); }
+
+.chargeback-dim-toggle {
+    display: inline-flex;
+    gap: 0.2rem;
+    padding: 0.2rem;
+    background: var(--bg-elevated);
+    border-radius: 7px;
+}
+.cb-dim-btn {
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.35rem 0.7rem;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.cb-dim-btn:hover { color: var(--text-primary); }
+.cb-dim-btn.active { color: var(--bg-primary); background: var(--accent-primary); }
+
+/* Hide the largest-kind columns when unavailable; hide the Projects column for the project view. */
+#chargeback-apps-table.kind-unavailable .cb-col-kind { display: none; }
+#chargeback-apps-table.dim-project .cb-col-projects { display: none; }
+.cb-app-key { font-size: 0.8em; opacity: 0.6; }
+
+/* Inline tag next to a section heading (e.g. "primary context" / "proportional"). */
+.section-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.12rem 0.45rem;
+    margin-left: 0.4rem;
+    border-radius: 999px;
+    vertical-align: middle;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+}
+
+/* Selectable capacity meter cards — the cMAU / connections meters double as the metric picker
+   for the growth + projection + contributor views below. */
+.capacity-meter-card.is-selectable {
+    cursor: pointer;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+.capacity-meter-card.is-selectable:hover {
+    border-color: var(--accent-primary);
+}
+.capacity-meter-card.is-selectable:focus-visible {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-primary);
+}
+.capacity-meter-card.is-selectable.active {
+    border-color: var(--accent-primary);
+    box-shadow: inset 0 0 0 1px var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-secondary));
+}
+
+/* By-application / by-project grouping sub-toggle (connections only) */
+.capacity-group-toggle {
+    display: inline-flex;
+    gap: 0.2rem;
+    padding: 0.2rem;
+    background: var(--bg-elevated);
+    border-radius: 7px;
+    flex-shrink: 0;
+}
+.cap-group-btn {
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.35rem 0.7rem;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.cap-group-btn:hover {
+    color: var(--text-primary);
+}
+.cap-group-btn.active {
+    color: var(--bg-primary);
+    background: var(--accent-primary);
+}
+
 /* Capacity card: side-by-side stat layout when both dimensions are configured */
 .capacity-split {
     display: flex;
@@ -1082,20 +1238,6 @@ select {
 }
 
 /* Chargeback & capacity */
-.checkbox-row {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-sm);
-    margin-top: var(--space-sm);
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    cursor: pointer;
-}
-
-.checkbox-row input {
-    margin-top: 0.2rem;
-}
-
 .capacity-inputs {
     display: flex;
     flex-wrap: wrap;
