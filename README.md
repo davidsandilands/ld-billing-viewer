@@ -99,10 +99,38 @@ Deploy to any static hosting service:
 - Azure Static Web Apps
 - Any web server
 
+## Headless export (`ld-export.mjs`)
+
+Prefer a script over the web page? `ld-export.mjs` pulls the **same datasets** the dashboard computes, straight from the LaunchDarkly usage APIs, and writes CSVs + a combined JSON. **No dependencies** — Node 18+ only (built-in `fetch`).
+
+```bash
+# Reader service-account token in the environment
+export LD_API_TOKEN=api-xxxxxxxx
+node ld-export.mjs                      # last complete month → ./ld-export-<month>/
+node ld-export.mjs --month=2026-06      # a specific month
+node ld-export.mjs --out=/tmp/ld --months=6   # custom output dir + trailing-months window
+```
+
+**Flags:** `--month=YYYY-MM` (default: last complete month) · `--out=DIR` · `--months=N` (capacity-growth window, default 12) · `--base=URL` (default `https://app.launchdarkly.com/api/v2`).
+
+**Outputs** (one CSV per dataset + `summary.json`):
+
+| File | Contents | Endpoint(s) |
+|------|----------|-------------|
+| `cmau-billing-by-app.csv` | Billed cMAU per application + share of org | `/usage/clientside-mau` (`groupBy=sdkAppId`) |
+| `gap-by-environment.csv` | Env total vs attributed vs unattributed cMAU | `/usage/clientside-mau` (`projectId,environmentId[,sdkAppId]`) |
+| `largest-kind-by-app.csv`, `largest-kind-by-project.csv` | Each entity's largest context kind + proportional share | `/usage/clientside-contexts` (per-kind loop) + `/projects/{key}/context-kinds` |
+| `connections-by-app.csv`, `connections-by-project.csv` | Peak service connections + share | `/usage/service-connections` (`groupBy=sdkAppId`/`projectId`) |
+| `capacity-growth.csv` | Trailing-N-month cMAU (by app) + connections (by app/project) | monthly loop of the above |
+| `mau-by-sdk.csv` | MAU by SDK type/series | `/usage/mau/sdks` |
+| `summary.json` | All of the above + the org cMAU snapshot, context-kind list, and run-rate projection | — |
+
+The script mirrors the data layer in `app.js`; see `chargebackspec.md` for the endpoint rationale and **limitations** (billed cMAU is primary-context-kind only; largest-kind is context-key usage, a different metric; per-app/project figures overlap and don't de-duplicate; `/usage/mau` is deprecated and rejects `sdkAppId`).
+
 ## Understanding the Metrics
 
 ### Client-side MAU (Monthly Active Users)
-The dashboard calls LaunchDarkly’s `/api/v2/usage/clientside-mau` beta endpoint to report the unique client-side contexts seen during the selected window. You can scope this metric with context kinds (for example, `user` vs `device`) and pick the aggregation window that matches LaunchDarkly’s billing UI.
+The dashboard calls LaunchDarkly’s `/api/v2/usage/clientside-mau` beta endpoint to report the billed client-side MAU for the selected window. This metric is **primary-context-kind only** (LD bills on the highest-cardinality kind) — it can’t be filtered or grouped by context kind. For a per-context-kind view (the “largest context kind” chargeback comparison) the app uses `/api/v2/usage/clientside-contexts` instead.
 
 ### Service Connections
 The peak number of concurrent connections from your SDKs to LaunchDarkly. This includes:

@@ -1,5 +1,12 @@
 # LaunchDarkly Chargeback and Capacity Monitoring
-**Specification Draft v0.1**
+**Specification Draft v0.2** — updated 2026-07-24
+
+---
+
+## Changelog
+
+- **v0.2 (2026-07-24):** Documented the confirmed usage endpoints after implementation and API validation — `clientside-mau` (billed, primary-context-kind only), `clientside-contexts` (per-context-kind, loop the `contextKind` filter), `/projects/{key}/context-kinds` (enumerate kinds); flagged `/usage/mau` as deprecated / rejecting `sdkAppId`. Added the primary-vs-highest-cardinality billing explanation, the two cMAU views (billing vs. largest context kind), and an endpoint reference + implementation-limitations section.
+- **v0.1:** Initial draft — allocation model, two billable dimensions, gap report, capacity thresholds.
 
 ---
 
@@ -64,6 +71,18 @@ This model is self-correcting: a team that inflates its cMAU through unnecessary
 
 **Tier inflation risk:** Multi-context evaluation can inflate total org cMAU and push the org into a higher contracted tier. This is a cost risk at the org level, not an attribution problem. Teams adding new context kinds should be aware their choices affect the org's total bill, not just their own share. This is worth noting in your platform onboarding docs but does not require enforcement at the chargeback layer.
 
+#### How LaunchDarkly counts the billable cMAU (primary vs. highest-cardinality context kind)
+
+The billable cMAU figure is the count of unique context keys for a **single context kind** — historically the **primary context kind** (usually `user`). LaunchDarkly is moving this to be **dynamic**: the metric reports whichever context kind has the **highest volume** in the month. Practical consequences confirmed with LD engineering:
+
+- On some (especially older) accounts the primary kind is pinned to `user` even when another kind (e.g. `device`, `visitor`, `anonymous-user`) has higher cardinality — so the billed cMAU can under-report real usage. Confirm the account's primary/effective kind before reconciling.
+- The billed metric (`/usage/clientside-mau`) is **primary-context-kind only** and cannot be broken down by context kind. To see the per-kind picture you need `/usage/clientside-contexts` (see below).
+
+This produces **two distinct chargeback views**, which should be kept separate:
+
+1. **Billing view (primary context):** per-application billed cMAU ÷ org cMAU. Reconciles to the invoice. Duplication across context kinds is inherent and cannot be removed here.
+2. **Largest-context-kind view (proportional, de-duplicated):** size each application/project by its **single largest context kind**, then allocate proportionally against the sum of those maxima. This reduces the same logical entity being counted once per kind, and tracks the dimension LD is moving to bill on. It is a **relative comparison built from a different metric** (`/usage/clientside-contexts` — context-key usages, not billed cMAU) and will **not** reconcile to the invoice.
+
 ---
 
 ### Service Connections
@@ -91,13 +110,13 @@ GET /api/v2/applications/{applicationKey}/versions
 
 `GET /api/v2/applications` returns a list of registered applications with their `key`, `name`, and `kind` (client or server). It confirms which applications have been seen by LaunchDarkly.
 
-**Important:** This endpoint lists applications and metadata. It does not necessarily return historical cMAU time series per application for an arbitrary billing window. The specific response fields and usage endpoints that produce application-level cMAU data vary by plan. Before implementing the chargeback calculation, confirm with your LaunchDarkly account team:
+**Confirmed cMAU endpoints (validated against the API, Q3 2026 — see the endpoint matrix below):**
 
-- Which endpoint returns per-application cMAU for a given time window
-- Whether that data is available programmatically or only in the Applications dashboard UI
-- Which response field maps to the billable cMAU count for a given period
-
-Until confirmed, treat the Applications dashboard as the source of record for per-application cMAU and document the manual export process as an interim step.
+- **`GET /api/v2/usage/clientside-mau`** — the current, correct source for **billed** Client-side MAU. Supersedes the older `/usage/mau` (which is being deprecated). `groupBy` accepts `projectId, environmentId, sdkName, sdkAppId, anonymousV2`. Returns **primary-context-kind only** — there is no `contextKind` filter or groupBy on this endpoint. Requires `LD-API-Version: beta`.
+  - Per-application billed cMAU: `groupBy=sdkAppId`.
+- **`GET /api/v2/usage/clientside-contexts`** — context-key usages across **all** context kinds (including non-primary). Same `groupBy` values as clientside-mau, plus a repeatable **`contextKind` filter**. Grouping by an entity returns per-entity **totals** (it does **not** split by kind in one call); to get a per-(entity × kind) breakdown, call it **once per context kind** with the `contextKind` filter and group by the entity. This is the source for the "largest context kind" view. Requires beta.
+- **`GET /api/v2/projects/{projectKey}/context-kinds`** — lists a project's context kinds (`key`, `name`, `lastSeen`). Union across projects to enumerate the kinds to loop over for the endpoint above.
+- **Avoid `GET /api/v2/usage/mau`** for new work — deprecated, uses a lowercase `groupby` param, and **rejects `sdkAppId`** as a group-by argument on at least some accounts (`"Invalid group by argument: sdkAppId"`).
 
 ```
 GET /api/v2/usage/mau/sdks
@@ -147,6 +166,31 @@ Authorization: <your-api-token>
 ```
 
 ---
+
+## Endpoint reference & implementation limitations
+
+### Which endpoint for which question
+
+| Question | Endpoint | Grouping / notes |
+|---|---|---|
+| Billed cMAU (org + per app) | `/usage/clientside-mau` | `groupBy=sdkAppId`; **primary context kind only**; reconciles to invoice |
+| Per-project / per-env cMAU (gap report) | `/usage/clientside-mau` | `groupBy=projectId,environmentId[,sdkAppId]`; unattributed = `Unknown` sdkAppId bucket |
+| Largest context kind per app/project | `/usage/clientside-contexts` | one call **per context kind** (`contextKind` filter) × `groupBy=sdkAppId` or `projectId`, then take each entity's max kind |
+| Enumerate context kinds | `/projects/{projectKey}/context-kinds` | union across projects |
+| Service connections (org + per app/project) | `/usage/service-connections`, `/usage/streams/{browser,mobile}` | `groupBy=sdkAppId` / `projectId`; per-app requires Relay v8.17.8+ and SDKs sending `application.id` |
+| MAU by SDK type | `/usage/mau/sdks` | client vs server balance |
+| Do **not** use for new work | `/usage/mau` | deprecated; lowercase `groupby`; rejects `sdkAppId` on some accounts |
+
+All usage endpoints require `LD-API-Version: beta`.
+
+### Limitations of the implemented tool
+
+- **Application attribution depends on `application.id`.** SDKs that don't send it land in an `Unknown` / "Unattributed" bucket. This is the single biggest prerequisite for meaningful per-app chargeback.
+- **Billing vs. largest-context-kind are different metrics.** The billing view (`clientside-mau`, primary kind) reconciles to the invoice. The largest-context-kind view (`clientside-contexts`, context-key usages across all kinds) is a **relative de-duplicated comparison only** and will not sum to the invoice.
+- **Unique-count overlap when grouping by project.** The sum of per-project (or per-app) cMAU does **not** equal the org total — the same unique context can appear in multiple projects. There is no clean way to de-duplicate a unique-count metric across groups; allocate proportionally and document the caveat.
+- **Per-project cMAU grouping is plan-dependent.** `groupBy=projectId` on `clientside-mau` collapses to a single row on some plans/accounts.
+- **Largest-context-kind cost.** Because `clientside-contexts` won't split by kind in one grouped call, the tool fires `#projects` (kind enumeration) + `#kinds × 2` (per-kind, per-dimension) extra calls per fetch. Acceptable for on-demand use; consider caching for large accounts.
+- **Snapshot basis.** cMAU is a rolling/MTD metric; the tool reads the month-end (snapshot-day) value so figures reconcile to a single billing day. Small month-boundary carry-over is expected.
 
 ## Chargeback Allocation Model
 
