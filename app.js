@@ -3817,6 +3817,77 @@ function downloadTextFile(content, filename) {
     URL.revokeObjectURL(url);
 }
 
+/** Serialize header + rows (arrays) to a CSV string and download it. */
+function downloadCsv(headers, rows, filename) {
+    const cell = (v) => (typeof v === 'number' && Number.isFinite(v))
+        ? String(v)
+        : `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [headers.map(cell).join(','), ...rows.map(r => r.map(cell).join(','))];
+    downloadTextFile(lines.join('\n'), filename);
+}
+
+/**
+ * Export any rendered Chart.js instance to CSV straight from its datasets — works for both
+ * category-axis charts (labels + numeric data) and time-axis charts ({x,y} points).
+ */
+function exportChartCsv(chart, filename) {
+    if (!chart || !chart.data || !(chart.data.datasets || []).length) {
+        showError('Nothing to export on this chart yet — fetch data first.');
+        return;
+    }
+    const datasets = chart.data.datasets;
+    const labels = chart.data.labels;
+    const headers = ['label', ...datasets.map(d => d.label || 'series')];
+    const rows = [];
+    if (Array.isArray(labels) && labels.length) {
+        labels.forEach((lab, i) => rows.push([lab, ...datasets.map(d => d.data?.[i] ?? '')]));
+    } else {
+        // Time-axis: datasets hold {x,y}; build a sorted union of x values.
+        const byX = new Map();
+        datasets.forEach((d, di) => (d.data || []).forEach(pt => {
+            if (pt == null) return;
+            const x = (pt && typeof pt === 'object' && 'x' in pt) ? pt.x : pt;
+            const key = x instanceof Date ? x.getTime() : x;
+            if (!byX.has(key)) byX.set(key, { x, vals: {} });
+            byX.get(key).vals[di] = (pt && typeof pt === 'object' && 'y' in pt) ? pt.y : pt;
+        }));
+        [...byX.values()]
+            .sort((a, b) => (a.x > b.x ? 1 : a.x < b.x ? -1 : 0))
+            .forEach(({ x, vals }) => {
+                const label = x instanceof Date ? formatDateForInput(x) : x;
+                rows.push([label, ...datasets.map((_, di) => vals[di] ?? '')]);
+            });
+    }
+    downloadCsv(headers, rows, filename);
+}
+
+/** Dispatcher for the small per-chart / per-table "Export CSV" buttons (data-export="..."). */
+function exportDataset(key) {
+    const stamp = formatDateForInput(new Date());
+    if (key && key.startsWith('chart:')) {
+        const name = key.slice('chart:'.length);
+        exportChartCsv(state.charts?.[name], `ld-${name}-${stamp}.csv`);
+        return;
+    }
+    if (key === 'table:sdks') {
+        const flat = flattenMauSdksPayload(state.chargeback?.mauSdks);
+        if (!flat.length) { showError('No SDK breakdown to export.'); return; }
+        downloadCsv(['sdkTypeOrSeries', 'value'], flat.map(r => [r.label, r.value]), `ld-mau-by-sdk-${stamp}.csv`);
+        return;
+    }
+    if (key === 'table:connectionsAllocation') {
+        const { rows } = computeProjectConnectionRows();
+        const nonzero = (rows || []).filter(r => r.connections > 0);
+        if (!nonzero.length) { showError('No per-project connection rows to export.'); return; }
+        downloadCsv(
+            ['projectKey', 'name', 'peakConnections', 'sharePercentOrg'],
+            nonzero.map(r => [r.key, r.name, r.connections, Number(r.share).toFixed(4)]),
+            `ld-connections-by-project-${stamp}.csv`
+        );
+        return;
+    }
+}
+
 // ==========================================
 // Event Handlers
 // ==========================================
@@ -3906,6 +3977,11 @@ function initEventListeners() {
                 selectCapacityMetric(card.getAttribute('data-cap-metric'));
             }
         });
+    });
+
+    // Per-chart / per-table Export CSV buttons (data-export="chart:<key>" | "table:<key>").
+    document.querySelectorAll('[data-export]').forEach(btn => {
+        btn.addEventListener('click', () => exportDataset(btn.getAttribute('data-export')));
     });
 
     // Contributor grouping (by application ↔ by project) — applies to both metrics.

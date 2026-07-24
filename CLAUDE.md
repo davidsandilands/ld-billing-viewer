@@ -80,6 +80,8 @@ LD usage APIs return internal MongoDB-style IDs (`projectId`, `environmentId`), 
 ## Key files beyond the three main ones
 
 - `chargebackspec.md` — internal spec describing the chargeback allocation model, the two billable dimensions (cMAU by application, service connections by project/env), the gap report formula, and capacity alert thresholds (70%/90%). Read this before changing chargeback logic.
+- `ld-export.mjs` — standalone headless exporter (Node 18+, no deps). Mirrors this app's data layer (same endpoints/derivations: cMAU billing by app, gap report, largest-context-kind by app+project via the per-kind loop, connections by app+project, trailing-month capacity growth) and writes one CSV per dataset + `summary.json`. Run `LD_API_TOKEN=… node ld-export.mjs`. Keep it in sync when the in-app fetch/derivation logic changes; usage is documented in `README.md`.
+- In the web app, every chart and table has an **Export CSV** control. Charts use a generic `exportChartCsv(chart, filename)` that serializes the rendered Chart.js datasets; small `data-export="chart:<key>|table:<key>"` buttons dispatch through `exportDataset()`.
 
 ## LD brand palette (from `styles.css` `:root`)
 

@@ -223,11 +223,12 @@
                     </div>
 
                     <div class="chart-container wide">
-                        <div class="chart-header">
+                        <div class="chart-header section-header-spaced">
                             <div>
                                 <h3>Billed cMAU by month</h3>
                                 <p class="section-sub">Month-end MTD cMAU (primary context kind, unfiltered) for the last 12 months. Current month is the running MTD as of today (partial). Contracted-limit + 70/90% threshold lines overlay if a cMAU limit is set in Configuration.</p>
                             </div>
+                            <button type="button" class="btn secondary small" data-export="chart:billedCmauHistory">Export CSV</button>
                         </div>
                         <div class="chart-wrapper">
                             <canvas id="billed-cmau-history-chart"></canvas>
@@ -357,11 +358,12 @@
 
                 <!-- Chargeback: MAU by SDK type -->
                 <div id="chargeback-sdks-section" class="chargeback-section">
-                    <div class="section-header">
+                    <div class="section-header section-header-spaced">
                         <div>
                             <h3>MAU by SDK type</h3>
                             <p class="section-sub"><code>GET /usage/mau/sdks</code> — client vs server balance signal.</p>
                         </div>
+                        <button type="button" class="btn secondary small" data-export="table:sdks">Export CSV</button>
                     </div>
                     <div class="table-wrapper">
                         <table class="data-table dense">
@@ -393,6 +395,7 @@
                             <h3>Connection allocation by project</h3>
                             <p class="section-sub">Each project&rsquo;s peak connection usage vs org total — proportional model for the service-connection cost line.</p>
                         </div>
+                        <button type="button" class="btn secondary small" data-export="table:connectionsAllocation">Export CSV</button>
                     </div>
                     <div class="table-wrapper">
                         <table class="data-table dense" id="connections-allocation-table">
@@ -465,12 +468,13 @@
 
                 <!-- Capacity growth + run-rate projection -->
                 <div class="chart-container wide">
-                    <div class="chart-header">
+                    <div class="chart-header section-header-spaced">
                         <div>
                             <h3>Capacity growth &amp; run-rate projection</h3>
                             <p class="section-sub">Month-by-month usage across completed months (solid), extended by a projected run rate (dashed) using the rolling 3-month average growth. Contracted-limit + 70/90% lines overlay when the matching contracted limit is set in Configuration.</p>
                             <p id="capacity-growth-subtitle" class="helper-inline" style="margin-top:0.35rem;"></p>
                         </div>
+                        <button type="button" class="btn secondary small" data-export="chart:capacityGrowth">Export CSV</button>
                     </div>
                     <div class="chart-wrapper">
                         <canvas id="capacity-growth-chart"></canvas>
@@ -485,9 +489,12 @@
                             <h3>Who is contributing (<span id="capacity-contrib-metric-label">cMAU by application</span>)</h3>
                             <p class="section-sub">Per-entity usage stacked over the trailing 12 months (top 8 + Other). App attribution requires SDKs to send <code>application.id</code>; the <em>Unattributed</em> slice is usage LaunchDarkly could not map.</p>
                         </div>
-                        <div class="capacity-group-toggle" id="capacity-group-toggle" role="group" aria-label="Group by">
-                            <button type="button" class="cap-group-btn active" data-cap-group="app" aria-pressed="true">By application</button>
-                            <button type="button" class="cap-group-btn" data-cap-group="project" aria-pressed="false">By project</button>
+                        <div class="chart-controls">
+                            <div class="capacity-group-toggle" id="capacity-group-toggle" role="group" aria-label="Group by">
+                                <button type="button" class="cap-group-btn active" data-cap-group="app" aria-pressed="true">By application</button>
+                                <button type="button" class="cap-group-btn" data-cap-group="project" aria-pressed="false">By project</button>
+                            </div>
+                            <button type="button" class="btn secondary small" data-export="chart:capacityContrib">Export CSV</button>
                         </div>
                     </div>
                     <p id="capacity-dedup-note" class="dedup-warning" style="display:none;">⚠ cMAU counts <strong>unique contexts</strong>. The same context can appear in multiple applications and projects, and multi-context evaluations add further counts — so these per-entity figures <strong>overlap and can't be de-duplicated</strong>. They sum to more than the org total; treat the shares as proportional estimates, not exact allocations.</p>
@@ -554,6 +561,7 @@
                                     <option value="bar">Bar Chart</option>
                                     <option value="area">Area Chart</option>
                                 </select>
+                                <button type="button" class="btn secondary small" data-export="chart:cmau">Export CSV</button>
                             </div>
                         </div>
                         <div class="chart-wrapper">
@@ -573,6 +581,7 @@
                                     <option value="bar">Bar Chart</option>
                                     <option value="area">Area Chart</option>
                                 </select>
+                                <button type="button" class="btn secondary small" data-export="chart:connections">Export CSV</button>
                             </div>
                         </div>
                         <div class="chart-wrapper">
@@ -684,7 +693,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=43"></script>
+    <script src="app.js?v=44"></script>
 </body>
 </html>
 
