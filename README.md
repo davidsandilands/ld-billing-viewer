@@ -1,25 +1,29 @@
 # LaunchDarkly Billing Viewer
 
-A browser-based dashboard for visualizing LaunchDarkly usage metrics including Client MAU (Monthly Active Users), Service Connections, and Experimentation Keys with customizable time frames and project breakdowns.
+A browser-based dashboard — **plus a headless export script** — for LaunchDarkly usage and chargeback: billed cMAU, service connections, context-kind allocation, and capacity/run-rate planning, broken down by **application** and **project**.
+
+> Two ways to use it: the **web app** (`index.html`, zero-build static site) for interactive exploration, or **`ld-export.mjs`** (Node 18+, no dependencies) to pull the same datasets to CSV/JSON headlessly. See [Headless export](#headless-export-ld-exportmjs).
 
 ## Overview
 
-The LaunchDarkly Billing Viewer provides a better user experience for analyzing your LaunchDarkly usage data compared to the built-in billing UI. It allows you to:
+A friendlier lens on LaunchDarkly usage than the built-in billing UI, aimed at internal cost allocation:
 
-- **Easily customize time frames** - Select from presets (7, 14, 30, 60, 90, 180, 365 days) or choose custom date ranges
-- **Break down usage by project** - See which projects are consuming the most resources
-- **Visualize trends** - Interactive charts show usage patterns over time
-- **Export data** - Download usage data as CSV for further analysis
+- **Chargeback** — cMAU billing by application or project (primary-context, reconciles to the invoice), plus a de-duplicated **largest-context-kind** proportional allocation.
+- **Capacity** — growth over time, a rolling-3-month **run-rate projection** (with projected breach month), and a contributor breakdown vs your contracted cMAU / connection limits.
+- **Break down by application and project** — see who's driving each billable dimension.
+- **Pick a billing month** (this/last month, a recent month, or a custom range); chargeback snapshots the last day of the month.
+- **Export anything** — every chart and table has an Export CSV button, or run the script for the full set without the UI.
 
 ## Features
 
-- 📊 **Interactive Charts** - Line, bar, or area charts for MAU and Service Connections
-- 📈 **Summary Dashboard** - At-a-glance metrics for total MAU, connections, experimentation keys, and projects
-- 🎯 **Project Breakdown** - Filter, search, and sort projects by usage
-- 📅 **Flexible Time Ranges** - Easy date selection with presets and custom ranges
-- 🧩 **Context Filters** - Limit Client-side MAU to specific context kinds and choose the aggregation window (rolling 30-day, MTD, or daily incremental)
-- 🌙 **Dark/Light Theme** - Toggle between themes for comfortable viewing
-- 📥 **CSV Export** - Download detailed usage data for reporting
+- 🧾 **Chargeback** - billed cMAU by application/project (primary context) + a largest-context-kind proportional allocation, with an unattributed-cMAU gap report
+- 📈 **Capacity planning** - growth, run-rate projection, and contributor stacks vs contracted limits (70% / 90% threshold lines)
+- 📊 **Interactive Charts** - line, bar, or area charts for MAU, connections, and growth
+- 🎯 **Application & Project breakdowns** - filter, search, and sort by usage
+- 📅 **Billing-month selector** - this month, last month, recent months, or a custom date range
+- 📥 **CSV export everywhere** - every chart and table exports its data
+- 🖥️ **Headless CLI** - `ld-export.mjs` (Node 18+, no deps) writes the same datasets as CSV + JSON
+- 🌙 **Dark/Light Theme** - toggle for comfortable viewing
 - 🔒 **Secure** - API tokens are never stored; all requests are made directly from your browser
 
 ## Quick Start
@@ -40,17 +44,14 @@ The LaunchDarkly Billing Viewer provides a better user experience for analyzing 
    - Generate a read-only API token from [LaunchDarkly Authorization Settings](https://app.launchdarkly.com/settings/authorization)
    - Paste it into the API Access Token field
 
-3. **Select Time Period**
-   - Choose a preset (Last 7/14/30/60/90/180/365 days) or
-   - Select "Custom range" and pick specific dates
+3. **Select the Billing Month**
+   - Choose **This month**, **Last month**, or a recent month — or pick **Custom range** for specific dates
+   - Chargeback figures snapshot the last day of the selected month (the current month is partial / month-to-date)
+   - Optionally set your contracted cMAU / service-connection limits under **Capacity thresholds** to see utilization and run-rate projections
 
-4. **(Optional) Choose Context & Aggregation**
-   - Enter one or more context kinds (for example `user`, `device`) to scope the Client-side MAU metric
-   - Pick an aggregation window (rolling 30 day, month-to-date, or daily incremental) to match LaunchDarkly’s billing view
-
-5. **Fetch Data**
-   - Click "Fetch Usage Data" to load your metrics
-   - View the interactive dashboard with charts and project breakdown
+4. **Fetch Data**
+   - Click "Fetch Usage Data", then explore the **Overview**, **cMAU**, **Connections**, **Capacity**, and **Trends** panels
+   - Use the **By application / By project** toggles and **Export CSV** on any chart or table
 
 ## API Token Setup
 
@@ -85,10 +86,13 @@ npx http-server -p 8000
 
 ### Option 3: GitHub Pages
 
-1. Push this repository to GitHub
-2. Go to Settings > Pages
-3. Select "Deploy from a branch" and choose `main`
-4. Your dashboard will be available at `https://yourusername.github.io/ld-billing-viewer/`
+This repo deploys via **Pages "Deploy from a branch"** (`main` / root) — no build step, no workflow. A `.nojekyll` file is included so files are served verbatim. To set it up on a fork:
+
+1. Push to GitHub
+2. Settings → Pages → Source: **Deploy from a branch**, Branch: `main`, Folder: `/ (root)`
+3. Your dashboard will be available at `https://<username>.github.io/ld-billing-viewer/`
+
+(The token is entered client-side and calls go straight to LaunchDarkly, so the static host needs no secrets or backend.)
 
 ### Option 4: Other Static Hosting
 
@@ -141,6 +145,17 @@ The peak number of concurrent connections from your SDKs to LaunchDarkly. This i
 ### Experimentation Keys
 The number of unique experimentation metric keys used in your experiments during the period.
 
+### Chargeback allocation (two models)
+- **Billing (primary context)** — each application's or project's billed cMAU as a share of the org total. Reconciles to the invoice; duplication across context kinds is inherent and stays.
+- **Largest context kind (de-duplicated)** — each entity is sized by its single largest context kind, then allocated proportionally against the sum of those maxima. Reduces the same entity being counted once per kind, and tracks the dimension LaunchDarkly is moving to bill on. Built from `/usage/clientside-contexts` — a comparison metric, not the invoice figure.
+
+An **unattributed-cMAU gap report** (per environment) shows how much usage isn't tied to an `application.id`.
+
+### Capacity
+Growth of billed cMAU / peak connections over the trailing 12 months, a rolling-3-month run-rate projection (with the projected month you'd cross a contracted limit), and a contributor breakdown by application or project. Set contracted limits in **Configuration** to see utilization and 70% / 90% threshold lines.
+
+See [`chargebackspec.md`](chargebackspec.md) for the full allocation model, endpoint rationale, and limitations.
+
 ## Dashboard Features
 
 ### Summary Cards
@@ -171,7 +186,7 @@ Detailed tabular view of all usage data with:
 - Connection count
 
 ### CSV Export
-Download all usage data as a CSV file for external analysis or reporting.
+Every chart and table has its own **Export CSV** button (charts export the exact series plotted). For the complete set without the UI, use the [`ld-export.mjs`](#headless-export-ld-exportmjs) script.
 
 ## Security Notes
 
@@ -182,11 +197,11 @@ Download all usage data as a CSV file for external analysis or reporting.
 
 ## Limitations
 
-- Data availability depends on your LaunchDarkly plan and data retention settings
-- Some metrics may require specific LaunchDarkly features to be enabled
-- Large date ranges may take longer to load due to API pagination
-- CORS must be enabled for browser access (LaunchDarkly's API supports this)
-- Client-side MAU data comes from LaunchDarkly’s beta `/usage/clientside-mau` endpoint. If that endpoint is unavailable for your account we automatically fall back to the legacy `/usage/mau` API, which only reports user-based MAU counts.
+- Data availability and API granularity depend on your LaunchDarkly plan (some breakdowns visible in the UI aren't exposed via API on all plans).
+- **Billed cMAU (`/usage/clientside-mau`) is primary-context-kind only** and can't be split by context kind. The per-context-kind "largest context kind" view uses `/usage/clientside-contexts` — a *different* metric (context-key usages), a proportional comparison, **not** the invoice figure.
+- **Per-application / per-project figures overlap** — a unique context active in multiple apps/projects is counted in each, so they sum to more than the org total. They're proportional allocations, not a clean de-duplicated split (the UI flags this).
+- The largest-context-kind and capacity-growth views fire extra API calls (per context kind, and per trailing month) — heavier on large accounts, though all run in parallel and degrade gracefully per endpoint.
+- CORS is required for browser access (LaunchDarkly's usage API supports it); all usage endpoints use `LD-API-Version: beta`.
 
 ## Troubleshooting
 
@@ -199,8 +214,9 @@ Download all usage data as a CSV file for external analysis or reporting.
 - Try creating a new token with Reader role
 
 ### "No data available"
-- Try selecting a different or shorter time range
+- Try a different billing month (the current month is partial)
 - Verify your account has usage data for the selected period
+- For empty per-application rows, confirm your SDKs send `application.id` at init
 
 ### Charts not displaying
 - Ensure JavaScript is enabled in your browser
