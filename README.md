@@ -1,5 +1,7 @@
 # LaunchDarkly Billing Viewer
 
+> ⚠️ **Not an official or supported LaunchDarkly project.** This is a community tool under **active development and testing**. Behaviour and numbers may change, and figures should be independently verified against LaunchDarkly before you rely on them for billing or chargeback.
+
 A browser-based dashboard — **plus a headless export script** — for LaunchDarkly usage and chargeback: billed cMAU, service connections, context-kind allocation, and capacity/run-rate planning, broken down by **application** and **project**.
 
 > Two ways to use it: the **web app** (`index.html`, zero-build static site) for interactive exploration, or **`ld-export.mjs`** (Node 18+, no dependencies) to pull the same datasets to CSV/JSON headlessly. See [Headless export](#headless-export-ld-exportmjs).

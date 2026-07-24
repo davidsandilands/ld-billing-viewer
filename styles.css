@@ -712,6 +712,20 @@ select {
 }
 .chargeback-model-legend strong { color: var(--text-primary); }
 
+/* Global "not supported / in development" disclaimer banner */
+.dev-disclaimer {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--warning) 14%, var(--bg-secondary));
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+    border-radius: var(--radius-md);
+    padding: 0.55rem 0.85rem;
+    margin-bottom: var(--space-md);
+    text-align: center;
+}
+.dev-disclaimer strong { color: var(--text-primary); }
+
 /* cMAU de-duplication warning (Capacity contributor view) */
 .dedup-warning {
     margin: 0 0 0.9rem;
