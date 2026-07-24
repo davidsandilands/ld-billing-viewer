@@ -712,6 +712,20 @@ select {
 }
 .chargeback-model-legend strong { color: var(--text-primary); }
 
+/* cMAU de-duplication warning (Capacity contributor view) */
+.dedup-warning {
+    margin: 0 0 0.9rem;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--warning) 12%, var(--bg-secondary));
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-md);
+}
+.dedup-warning strong { color: var(--text-primary); }
+
 /* Top-level cMAU view switch (Billing ↔ Largest context kind) */
 .chargeback-view-switch {
     display: flex;

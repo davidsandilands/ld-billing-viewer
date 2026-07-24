@@ -16,7 +16,7 @@ const state = {
     applicationsError: null,
     viewMode: 'overview',
     capacityMetric: 'cmau',
-    capacityConnGroup: 'app',
+    capacityGroup: 'app',
     chargebackView: 'billing',
     chargebackDim: 'app',
     usageData: {
@@ -152,7 +152,8 @@ const elements = {
     capacityContribMetricLabel: document.getElementById('capacity-contrib-metric-label'),
     capacityGrowthLatestCol: document.getElementById('capacity-growth-latest-col'),
     capacityGrowthEntityCol: document.getElementById('capacity-growth-entity-col'),
-    capacityGroupToggle: document.getElementById('capacity-group-toggle')
+    capacityGroupToggle: document.getElementById('capacity-group-toggle'),
+    capacityDedupNote: document.getElementById('capacity-dedup-note')
 };
 
 // ==========================================
@@ -1457,10 +1458,15 @@ async function fetchAllUsageData() {
         try {
             const appResolver = makeAppEntityResolver();
             const projectResolver = makeProjectEntityResolver();
-            const [cmauMonthly, connMonthly, connByProjectMonthly] = await Promise.all([
+            const [cmauMonthly, cmauByProjectMonthly, connMonthly, connByProjectMonthly] = await Promise.all([
                 fetchMonthlyAppMetric(12,
                     (s, e) => fetchClientsideMauGrouped(s, e, ['sdkAppId'], { aggregationTypeUi: 'month_to_date' }),
                     'snapshot', appResolver),
+                // Per-project cMAU: group by projectId+environmentId (which works, unlike projectId
+                // alone) and let the project resolver sum environments back up to the project.
+                fetchMonthlyAppMetric(12,
+                    (s, e) => fetchClientsideMauGrouped(s, e, ['projectId', 'environmentId'], { aggregationTypeUi: 'month_to_date' }),
+                    'snapshot', projectResolver),
                 fetchMonthlyAppMetric(12,
                     (s, e) => fetchServiceConnectionsBy('sdkAppId', s, e),
                     'peak', appResolver),
@@ -1470,6 +1476,7 @@ async function fetchAllUsageData() {
             ]);
             state.usageData.capacityGrowth = {
                 cmau: cmauMonthly,
+                cmauByProject: cmauByProjectMonthly,
                 connections: connMonthly,
                 connectionsByProject: connByProjectMonthly
             };
@@ -3189,21 +3196,23 @@ function updateCapacityGrowth() {
     const hasLimit = Number.isFinite(limit) && limit > 0;
     const completed = buildCompletedOrgMonths(metricData);
 
-    // Contributor grouping: only service connections support a by-project breakdown
-    // (per-project cMAU is unavailable on most plans).
-    const supportsProject = metric === 'connections';
-    const group = supportsProject ? state.capacityConnGroup : 'app';
-    const contribData = (supportsProject && group === 'project')
-        ? (cg ? cg.connectionsByProject : null)
-        : metricData;
+    // Contributor grouping — both metrics support a by-project breakdown.
+    const group = state.capacityGroup === 'project' ? 'project' : 'app';
+    const projectData = cg ? (metric === 'connections' ? cg.connectionsByProject : cg.cmauByProject) : null;
+    const contribData = group === 'project' ? projectData : metricData;
     const entityNoun = group === 'project' ? 'project' : 'application';
 
     syncCapacityToggle('data-cap-metric', metric);
     syncCapacityToggle('data-cap-group', group);
-    if (elements.capacityGroupToggle) elements.capacityGroupToggle.style.display = supportsProject ? '' : 'none';
+    if (elements.capacityGroupToggle) elements.capacityGroupToggle.style.display = '';
     if (elements.capacityContribMetricLabel) elements.capacityContribMetricLabel.textContent = `${meta.unit} by ${entityNoun}`;
     if (elements.capacityGrowthLatestCol) elements.capacityGrowthLatestCol.textContent = meta.latestCol;
     if (elements.capacityGrowthEntityCol) elements.capacityGrowthEntityCol.textContent = entityNoun === 'project' ? 'Project' : 'Application';
+
+    // cMAU counts unique contexts and cannot be de-duplicated across entities; connections are discrete.
+    if (elements.capacityDedupNote) {
+        elements.capacityDedupNote.style.display = metric === 'cmau' ? 'block' : 'none';
+    }
 
     renderCapacityGrowthChart(completed, hasLimit ? limit : null, meta);
     renderCapacityContribChart(contribData, meta, entityNoun);
@@ -3737,9 +3746,10 @@ function exportCapacityGrowthCsv() {
     const meta = CAPACITY_METRICS[metric];
     const cg = state.usageData.capacityGrowth;
     const metricData = cg ? cg[metric] : null;
-    // Follow the active contributor grouping (connections support by-project).
-    const group = metric === 'connections' ? state.capacityConnGroup : 'app';
-    const contribData = (group === 'project') ? (cg ? cg.connectionsByProject : null) : metricData;
+    // Follow the active contributor grouping (both metrics support by-project).
+    const group = state.capacityGroup === 'project' ? 'project' : 'app';
+    const projectData = cg ? (metric === 'connections' ? cg.connectionsByProject : cg.cmauByProject) : null;
+    const contribData = (group === 'project') ? projectData : metricData;
     const entityCol = group === 'project' ? 'Project' : 'Application';
     if (!metricData || !metricData.months?.length || !contribData || !contribData.apps?.length) {
         showError('No capacity growth data to export. Fetch usage data first.');
@@ -3894,12 +3904,12 @@ function initEventListeners() {
         });
     });
 
-    // Connections contributor grouping (by application ↔ by project).
+    // Contributor grouping (by application ↔ by project) — applies to both metrics.
     document.querySelectorAll('[data-cap-group]').forEach(btn => {
         btn.addEventListener('click', () => {
             const group = btn.getAttribute('data-cap-group');
-            if (!group || group === state.capacityConnGroup) return;
-            state.capacityConnGroup = group;
+            if (!group || group === state.capacityGroup) return;
+            state.capacityGroup = group;
             updateCapacityGrowth();
         });
     });

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=22">
+    <link rel="stylesheet" href="styles.css?v=23">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -484,15 +484,16 @@
                             <h3>Who is contributing (<span id="capacity-contrib-metric-label">cMAU by application</span>)</h3>
                             <p class="section-sub">Per-entity usage stacked over the trailing 12 months (top 8 + Other). App attribution requires SDKs to send <code>application.id</code>; the <em>Unattributed</em> slice is usage LaunchDarkly could not map.</p>
                         </div>
-                        <div class="capacity-group-toggle" id="capacity-group-toggle" role="group" aria-label="Group connections by" style="display:none;">
+                        <div class="capacity-group-toggle" id="capacity-group-toggle" role="group" aria-label="Group by">
                             <button type="button" class="cap-group-btn active" data-cap-group="app" aria-pressed="true">By application</button>
                             <button type="button" class="cap-group-btn" data-cap-group="project" aria-pressed="false">By project</button>
                         </div>
                     </div>
+                    <p id="capacity-dedup-note" class="dedup-warning" style="display:none;">⚠ cMAU counts <strong>unique contexts</strong>. The same context can appear in multiple applications and projects, and multi-context evaluations add further counts — so these per-entity figures <strong>overlap and can't be de-duplicated</strong>. They sum to more than the org total; treat the shares as proportional estimates, not exact allocations.</p>
                     <div class="chart-wrapper">
                         <canvas id="capacity-contrib-chart"></canvas>
                     </div>
-                    <p id="capacity-contrib-empty" class="helper-inline muted" style="display:none;">No per-application history returned for this metric. Per-project attribution is unavailable on most plans; attribution is by application only.</p>
+                    <p id="capacity-contrib-empty" class="helper-inline muted" style="display:none;">No per-entity history returned for this metric and grouping. Application attribution needs SDKs sending <code>application.id</code>; per-project figures need environment-level usage data.</p>
                 </div>
 
                 <!-- Per-app growth summary + CSV export -->
@@ -682,7 +683,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=41"></script>
+    <script src="app.js?v=42"></script>
 </body>
 </html>
 
