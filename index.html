@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=23">
+    <link rel="stylesheet" href="styles.css?v=24">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -276,6 +276,7 @@
                             <button type="button" id="export-chargeback-apps" class="btn secondary small">Export CSV</button>
                         </div>
                     </div>
+                    <p class="dedup-warning">⚠ cMAU counts <strong>unique contexts</strong>. A context active in more than one application is counted in each, so per-application cMAU can sum to <strong>more than the billed org total</strong> — these are proportional allocations, not a clean de-duplicated split. The org total reconciles to the invoice; the per-app breakdown does not.</p>
                     <div class="table-wrapper">
                         <table class="data-table dense">
                             <thead>
@@ -500,8 +501,8 @@
                 <div class="table-section">
                     <div class="section-header section-header-spaced">
                         <div>
-                            <h3>Application growth summary</h3>
-                            <p class="section-sub">Latest-month usage, rolling 3-month growth rate, and share of the org total per application. Export the full month-by-month matrix and projection as CSV.</p>
+                            <h3><span id="capacity-growth-summary-entity">Application</span> growth summary</h3>
+                            <p class="section-sub">Latest-month usage, rolling 3-month growth rate, and share of the org total per <span id="capacity-growth-summary-entity-word">application</span>. Export the full month-by-month matrix and projection as CSV.</p>
                             <p id="capacity-growth-gap-note" class="helper-inline muted" style="margin-top:0.35rem;"></p>
                         </div>
                         <div class="section-header-actions">
@@ -683,7 +684,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=42"></script>
+    <script src="app.js?v=43"></script>
 </body>
 </html>
 

@@ -153,7 +153,9 @@ const elements = {
     capacityGrowthLatestCol: document.getElementById('capacity-growth-latest-col'),
     capacityGrowthEntityCol: document.getElementById('capacity-growth-entity-col'),
     capacityGroupToggle: document.getElementById('capacity-group-toggle'),
-    capacityDedupNote: document.getElementById('capacity-dedup-note')
+    capacityDedupNote: document.getElementById('capacity-dedup-note'),
+    capacityGrowthSummaryEntity: document.getElementById('capacity-growth-summary-entity'),
+    capacityGrowthSummaryEntityWord: document.getElementById('capacity-growth-summary-entity-word')
 };
 
 // ==========================================
@@ -3208,6 +3210,8 @@ function updateCapacityGrowth() {
     if (elements.capacityContribMetricLabel) elements.capacityContribMetricLabel.textContent = `${meta.unit} by ${entityNoun}`;
     if (elements.capacityGrowthLatestCol) elements.capacityGrowthLatestCol.textContent = meta.latestCol;
     if (elements.capacityGrowthEntityCol) elements.capacityGrowthEntityCol.textContent = entityNoun === 'project' ? 'Project' : 'Application';
+    if (elements.capacityGrowthSummaryEntity) elements.capacityGrowthSummaryEntity.textContent = entityNoun === 'project' ? 'Project' : 'Application';
+    if (elements.capacityGrowthSummaryEntityWord) elements.capacityGrowthSummaryEntityWord.textContent = entityNoun;
 
     // cMAU counts unique contexts and cannot be de-duplicated across entities; connections are discrete.
     if (elements.capacityDedupNote) {
