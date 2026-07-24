@@ -267,6 +267,12 @@ async function main() {
         ['applicationKey', 'name', 'cmau', 'sharePercentOrg'],
         cmauByApp.map(r => [r.key, r.name, Math.round(r.value), r.sharePct.toFixed(4)]));
 
+    // 1b. cMAU billing by project (env-level cMAU summed to project; shares vs org)
+    const cmauByProject = shareRows(perEntityValue(envRaw, resolveProj, 'snapshot'), orgCmau, nameProj);
+    await writeCsv('cmau-billing-by-project.csv',
+        ['projectKey', 'name', 'cmau', 'sharePercentOrg'],
+        cmauByProject.map(r => [r.key, r.name, Math.round(r.value), r.sharePct.toFixed(4)]));
+
     // 2. Unattributed gap by environment
     const envCols = groupedToColumns(envRaw);
     const tripleCols = groupedToColumns(tripleRaw);
@@ -377,6 +383,7 @@ async function main() {
         orgCmauSnapshot: Math.round(orgCmau),
         contextKinds: kinds,
         cmauBillingByApp: cmauByApp,
+        cmauBillingByProject: cmauByProject,
         gapByEnvironment: gapRows,
         largestKindByApp: lkApp,
         largestKindByProject: lkProj,

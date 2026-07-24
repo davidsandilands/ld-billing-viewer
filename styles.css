@@ -784,6 +784,7 @@ select {
 
 /* Hide the largest-kind columns when unavailable; hide the Projects column for the project view. */
 #chargeback-apps-table.kind-unavailable .cb-col-kind { display: none; }
+#chargeback-billing-table.billing-dim-project .cb-billing-app-only { display: none; }
 #chargeback-apps-table.dim-project .cb-col-projects { display: none; }
 .cb-app-key { font-size: 0.8em; opacity: 0.6; }
 
