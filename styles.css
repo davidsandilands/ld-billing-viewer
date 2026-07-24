@@ -712,6 +712,18 @@ select {
 }
 .chargeback-model-legend strong { color: var(--text-primary); }
 
+/* Token security caveat under the API-token input */
+.token-security-note {
+    margin: 0.4rem 0 0;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+    border-left: 3px solid var(--warning);
+    padding-left: 0.6rem;
+}
+.token-security-note strong { color: var(--text-secondary); }
+.token-security-note code { font-size: 0.9em; }
+
 /* Global "not supported / in development" disclaimer banner */
 .dev-disclaimer {
     font-size: 0.8rem;
