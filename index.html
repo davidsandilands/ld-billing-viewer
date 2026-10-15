@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LaunchDarkly Billing Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=27">
+    <link rel="stylesheet" href="styles.css?v=28">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -34,6 +34,7 @@
                     <button type="button" class="view-mode-btn active" data-view-mode="overview" role="tab" aria-selected="true">Overview</button>
                     <button type="button" class="view-mode-btn" data-view-mode="cmau" role="tab" aria-selected="false">cMAU</button>
                     <button type="button" class="view-mode-btn" data-view-mode="connections" role="tab" aria-selected="false">Connections</button>
+                    <button type="button" class="view-mode-btn" data-view-mode="experimentation" role="tab" aria-selected="false">Experimentation</button>
                     <button type="button" class="view-mode-btn" data-view-mode="capacity" role="tab" aria-selected="false">Capacity</button>
                     <button type="button" class="view-mode-btn" data-view-mode="trends" role="tab" aria-selected="false">Trends</button>
                 </div>
@@ -116,6 +117,10 @@
                                     <span class="mini-label">Peak service connections</span>
                                     <input type="number" id="capacity-conn-limit" min="0" step="1" placeholder="e.g. 50000" autocomplete="off">
                                 </div>
+                                <div class="capacity-field">
+                                    <span class="mini-label">Contracted experimentation <span class="muted">(keys or eMAU)</span></span>
+                                    <input type="number" id="capacity-exp-limit" min="0" step="1" placeholder="e.g. 580000" autocomplete="off">
+                                </div>
                             </div>
                             <span class="helper-text">Used in Capacity view for utilization vs 70% / 90% guides. Not sent to LaunchDarkly.</span>
                         </div>
@@ -186,15 +191,14 @@
                         </div>
                     </div>
 
-                    <div class="summary-card experiments coming-soon" aria-disabled="true">
-                        <span class="coming-soon-badge">Coming soon</span>
+                    <div class="summary-card experiments" data-view-mode="experimentation" role="button" tabindex="0" aria-label="Experimentation — chargeback by billing model">
                         <div class="card-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
                             </svg>
                         </div>
                         <div class="card-content">
-                            <span class="card-label">Experimentation Keys</span>
+                            <span class="card-label" id="experiments-card-label">Experimentation Keys</span>
                             <span class="card-value" id="total-experiments">--</span>
                             <span class="card-subtitle" id="experiments-period">Current period</span>
                         </div>
@@ -222,7 +226,8 @@
                         <ul class="spec-checklist">
                             <li><strong>cMAU</strong> — Registered apps, per-application cMAU share, environment gap report, MAU by SDK type</li>
                             <li><strong>Connections</strong> — Stream mix (server / browser / mobile) and each project&rsquo;s share of org connection peaks</li>
-                            <li><strong>Capacity</strong> — Utilization vs optional contracted ceilings (70% / 90% guides)</li>
+                            <li><strong>Experimentation</strong> — Chargeback for the contract&rsquo;s model: experimentation keys (by project / experiment), Experimentation MAU (by application / project), or bundled showback</li>
+                            <li><strong>Capacity</strong> — Utilization vs optional contracted ceilings (70% / 90% guides) for cMAU, service connections and experimentation</li>
                             <li><strong>Trends</strong> — Time series, project cards, and CSV export for analysis</li>
                         </ul>
                     </div>
@@ -452,6 +457,55 @@
                     <p id="connections-by-app-empty" class="helper-inline muted" style="display:none;">No per-application connection breakdown for this period.</p>
                 </div>
 
+                <!-- Panel: Experimentation chargeback (model depends on the contract) -->
+                <div id="panel-experimentation" class="dashboard-panel" style="display: none;">
+                    <div class="chargeback-view-switch" role="group" aria-label="Experimentation billing model">
+                        <button type="button" class="cb-view-btn active" data-exp-model="keys" aria-pressed="true">
+                            <span class="cb-view-title">Experimentation keys</span>
+                            <span class="cb-view-sub">Contexts per experiment · by project or experiment</span>
+                        </button>
+                        <button type="button" class="cb-view-btn" data-exp-model="emau" aria-pressed="false">
+                            <span class="cb-view-title">Experimentation MAU</span>
+                            <span class="cb-view-sub">eMAU pool · by application or project</span>
+                        </button>
+                        <button type="button" class="cb-view-btn" data-exp-model="bundled" aria-pressed="false">
+                            <span class="cb-view-title">Bundled (FM+E)</span>
+                            <span class="cb-view-sub">No experimentation meter · showback by keys</span>
+                        </button>
+                    </div>
+
+                    <div class="chargeback-section">
+                        <div class="section-header">
+                            <div>
+                                <h3><span id="exp-table-title">Experimentation keys by project</span> <span class="section-tag">month to date</span></h3>
+                                <p class="section-sub" id="exp-model-note"></p>
+                                <p id="exp-table-meta" class="helper-inline muted" style="margin-top:0.35rem;"></p>
+                            </div>
+                            <div class="section-header-actions">
+                                <div class="chargeback-dim-toggle" role="group" aria-label="Experimentation allocation dimension">
+                                    <button type="button" class="cb-dim-btn active" data-exp-dim="project" aria-pressed="true">By project</button>
+                                    <button type="button" class="cb-dim-btn" data-exp-dim="experiment" aria-pressed="false">By experiment</button>
+                                    <button type="button" class="cb-dim-btn" data-exp-dim="app" aria-pressed="false">By application</button>
+                                </div>
+                                <button type="button" class="btn secondary small" data-export="table:experiments">Export CSV</button>
+                            </div>
+                        </div>
+                        <p class="dedup-warning" id="exp-model-caveat"></p>
+                        <div id="exp-bundle-wrap" class="form-group" style="display:none; max-width: 22rem; margin-bottom: var(--space-md);">
+                            <label for="exp-bundle-value">Experimentation value to allocate (optional)</label>
+                            <input type="text" id="exp-bundle-value" inputmode="decimal" placeholder="e.g. 50000" autocomplete="off">
+                            <span class="helper-inline muted">Internal figure you attribute to experimentation. Spread by each row&rsquo;s keys share. Not on the LD invoice.</span>
+                        </div>
+                        <div class="table-wrapper">
+                            <table class="data-table dense">
+                                <thead id="exp-table-head"></thead>
+                                <tbody id="exp-table-body"></tbody>
+                            </table>
+                        </div>
+                        <p id="exp-table-empty" class="helper-inline muted" style="display:none;"></p>
+                    </div>
+                </div><!-- /panel-experimentation -->
+
                 <!-- Panel: Capacity -->
                 <div id="panel-capacity" class="dashboard-panel" style="display: none;">
                 <p class="section-sub" style="margin-bottom:0.6rem;">Select a dimension to drive the growth, projection, and contributor views below.</p>
@@ -471,6 +525,14 @@
                         </div>
                         <div class="meter-track"><div class="meter-fill meter-fill-alt" id="meter-conn-fill"></div></div>
                         <p class="meter-footnote" id="meter-conn-note">Peak streams in period vs your contracted ceiling.</p>
+                    </div>
+                    <div class="capacity-meter-card is-selectable" id="meter-exp-wrap" data-cap-metric="experimentation" role="button" tabindex="0" aria-pressed="false" title="Show experimentation growth &amp; projection below">
+                        <div class="capacity-meter-head">
+                            <h3 id="meter-exp-title">Experimentation utilization</h3>
+                            <span class="meter-value" id="meter-exp-label">--</span>
+                        </div>
+                        <div class="meter-track"><div class="meter-fill meter-fill-alt" id="meter-exp-fill"></div></div>
+                        <p class="meter-footnote" id="meter-exp-note">Month-to-date meter for the Experimentation model selected in the Experimentation panel.</p>
                     </div>
                 </div>
 
@@ -701,7 +763,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=45"></script>
+    <script src="app.js?v=52"></script>
 </body>
 </html>
 

@@ -37,7 +37,9 @@ One module-level `const state` object holds everything:
 - `state.usageData` — raw API responses: `mau`, `streams.{server,browser,mobile}`, `experiments`, `projectMau`, `projectConnections`, `projectConnectionsBrowser`, `projectConnectionsMobile`
 - `state.chargeback` — derived chargeback rows: `apps[]` (billing, primary-context cMAU by app), `gap[]`, `mauSdks`, `orgCmauTotal`, and `appKind`/`projectKind` (largest-context-kind allocation, each `{ available, rows[], denom, debug }`)
 - `state.filters` — `{ contextKinds, aggregationType }` from the config form
-- `state.viewMode` — which panel is active (`'overview' | 'cmau' | 'connections' | 'capacity' | 'trends'`)
+- `state.chargeback.experimentation` — `keys` (`orgTotal`, `project`/`experiment` `{rows, denom}`) and `emau` (`orgTotal`, `primaryContextKind`, `app`/`project`), built by `buildExperimentationChargeback()`
+- `state.expModel` (`'keys' | 'emau' | 'bundled'`) / `state.expDim` (`'project' | 'experiment' | 'app'`) — Experimentation panel selection
+- `state.viewMode` — which panel is active (`'overview' | 'cmau' | 'connections' | 'experimentation' | 'capacity' | 'trends'`)
 
 ### Data flow
 
@@ -47,6 +49,7 @@ One module-level `const state` object holds everything:
 2. Fires ~13 parallel API calls via `Promise.all` — all usage endpoints, applications registry, and three separate `groupBy` variants of clientside-MAU
 3. Builds chargeback structures from raw API data
 4. Calls `updateDashboard()` → individual render functions per panel
+5. Kicks off background loads (see Request throttling below): experiment names, Capacity history, largest context kind
 
 ### Navigation
 
@@ -67,7 +70,7 @@ The cMAU panel has **two independent views** (a top switch, `state.chargebackVie
 | `tripleRaw` | `['projectId','environmentId','sdkAppId']` | App-to-project mapping + gap report numerator |
 | `cmauChargebackTotalRaw` | _(none)_ | Org total → denominator for share % |
 
-**2. Largest-context-kind view (`state.chargebackDim` = `'app'|'project'`).** `/usage/clientside-mau` is **primary-kind only and cannot break down by context kind**, so this view uses **`/usage/clientside-contexts`** instead. That endpoint won't split by kind when grouped by an entity, so the build is: `fetchAccountContextKinds()` (union of `/projects/{key}/context-kinds`) → `fetchPerKindContexts(from,to,dim,kinds)` fires one `clientside-contexts?groupBy=<dim>&contextKind=<K>` call **per kind** → `buildLargestKindRowsFromPerKind()` folds them into a per-(entity × kind) matrix, sizes each entity by its largest kind, and allocates `share = max / Σ(max)`. This runs after the main `Promise.all` (needs `state.projects`), before `updateDashboard()`. It is a **different metric** (context-key usages, not billed cMAU) — a relative comparison, not the invoice figure.
+**2. Largest-context-kind view (`state.chargebackDim` = `'app'|'project'`).** `/usage/clientside-mau` is **primary-kind only and cannot break down by context kind**, so this view uses **`/usage/clientside-contexts`** instead. That endpoint won't split by kind when grouped by an entity, so the build is: `fetchAccountContextKinds()` (union of `/projects/{key}/context-kinds`) → `fetchPerKindContexts(from,to,dim,kinds)` fires one `clientside-contexts?groupBy=<dim>&contextKind=<K>` call **per kind** → `buildLargestKindRowsFromPerKind()` folds them into a per-(entity × kind) matrix, sizes each entity by its largest kind, and allocates `share = max / Σ(max)`. This runs in the background after `updateDashboard()` (`loadLargestContextKind()`; the table shows a loading note via `state.largestKindLoading`) — on large accounts it's hundreds of calls. It is a **different metric** (context-key usages, not billed cMAU) — a relative comparison, not the invoice figure.
 
 `groupedUsageToColumns(raw)` converts the `{ metadata[], series[] }` response shape into `[{ meta, index, peak, series }]` columns. The response uses numeric index keys (`"0"`, `"1"`, …) to reference columns in each series point.
 
@@ -98,6 +101,14 @@ LD usage APIs return internal MongoDB-style IDs (`projectId`, `environmentId`), 
 
 Font: **Inter** (display) + **JetBrains Mono** (numbers, code, tags).
 
+### Experimentation chargeback
+
+The contract decides the meter, so the panel has a model switch (see `chargebackspec.md` → Experimentation). **Keys:** `/usage/experimentation-keys` grouped by `projectId,experimentId` (additive, MTD cumulative → peak), joined to `/projects/{key}/experiments` (`_id` = usage `experimentId`). **eMAU:** `/usage/total-mau`, fed through the cMAU builders (`buildChargebackApplicationRows`, `buildProjectCmauRows`). **Bundled** (FY27 FM+E / Guardian): no invoice line; showback using keys share. **Capacity:** a third meter + `capacityMetric='experimentation'` follow `state.expModel` (`capacityMetricMeta()` / `resolveCapacitySeries()`); keys are project-only (the by-application toggle is disabled), bundled has no cap so no limit line/breach projection. Limit persisted as `ld-billing-cap-exp`. `buildExperimentationView()` is the single column/row descriptor used by both the table and the CSV export.
+
+### Request throttling and background loading
+
+`apiRequest()` caps in-flight calls at `API_MAX_CONCURRENT` (12) and retries 429/502/503/504 up to `API_MAX_RETRIES` with backoff (Retry-After when CORS exposes it). The dashboard renders after the core fetch (~30 calls); experiment names (`loadExperimentCatalog()`, only projects with keys usage), the largest-context-kind matrix, and the 12-month Capacity history (`CAPACITY_SERIES`) then load in the background via `startCapacityGrowthLoad()` / `loadCapacitySeries()`, with only the experimentation series for the selected model (fetched on demand when the model changes). Each Fetch logs a `[fetch timing]` console group (per-stage and per-endpoint latency, queue wait, retries).
+
 ## Known API limitations
 
 - **`/usage/clientside-mau` is primary-context-kind only.** No `contextKind` filter or groupBy — you cannot get a per-context-kind breakdown from it. Valid `groupBy`: `projectId, environmentId, sdkName, sdkAppId, anonymousV2`. This is the billed metric; LD is moving the billed kind from fixed-`user` to the highest-cardinality kind per month.
@@ -107,4 +118,6 @@ Font: **Inter** (display) + **JetBrains Mono** (numbers, code, tags).
 - `/usage/streams/browser` and `/usage/streams/mobile` do not support `groupBy=projectId` on most plans. The Connections panel fetches them optimistically and falls back gracefully; the allocation table notes which sources are included.
 - Per-application data (cMAU, service connections) depends on SDKs sending `application.id` at init; otherwise usage lands in an `Unknown`/"Unattributed" bucket.
 - Summing per-project (or per-app) cMAU does not equal the org total — the same unique context can appear in multiple groups; there's no clean de-dup for a unique-count metric.
+- **`/usage/experimentation-keys`** groups only by `projectId`, `environmentId`, `experimentId` — **no `sdkAppId`**. Its `projectKey` filter was a no-op (account-wide data) until Sep 2026, so group instead of filtering. Figures changed at the Sep 2025 Amberflo→Postgres move.
+- **`/usage/total-mau` is LD's eMAU meter.** It counts the eligible pool (not experiment participation); the counted kind can change mid-month (`primaryContextKindByTimestamp`); LD-side eMAU overrides aren't exposed. Do not use `/usage/experimentation-units` (Amberflo, deprecated).
 - All usage endpoints require `LD-API-Version: beta`. `apiRequest(endpoint, params, { apiVersion: 'beta' })` sets this header. (`/projects/{key}/context-kinds` is GA and is called without the beta header.)

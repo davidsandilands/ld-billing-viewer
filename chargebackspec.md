@@ -85,6 +85,28 @@ This produces **two distinct chargeback views**, which should be kept separate:
 
 ---
 
+### Experimentation
+
+LaunchDarkly has billed Experimentation several ways, and the contract decides which (if any) appears on the invoice. Confirm the customer's model before allocating.
+
+| Model | Era | Billed quantity | API | Allocation grain |
+|---|---|---|---|---|
+| Experimentation events | 2020 – Oct 2022 (legacy) | Feature / custom / click / pageview events tied to active experiments | `/usage/experimentation-events` (`groupBy=environmentId,eventKind,eventKey`) | Not implemented (legacy) |
+| **Experimentation keys** | 2022 – today (renewals may stay on it) | Unique contexts **per experiment**, summed across experiments (a context in two experiments = two keys) | `/usage/experimentation-keys` (`groupBy=projectId,environmentId,experimentId`) | Project, experiment. **No `sdkAppId`** |
+| **Experimentation MAU (eMAU)** | Dec 2024 onward | Unique contexts of the most-used context kind across client-side + non-anonymous server-side SDKs, **whether or not they were in an experiment** | `/usage/total-mau` (backs the LD eMAU chart; `groupBy=projectId,environmentId,sdkAppId,…`) | Application, project (same as cMAU) |
+| % of deal / platform fee | 2021 | Flat premium | — | Driver-based only |
+| **FY27 FM+E bundle** (and Guardian) | New business from Apr 2026 | **None** — experimentation is bundled into cMAU / service connections | — | Showback only |
+
+**Keys** are the only meter that measures real experiment participation, and they are **additive**: per-project and per-experiment values sum to the org total (any remainder is shown as Unattributed). Allocation: `team_share = team_keys / org_keys`. The series is month-to-date cumulative, so the month-to-date value is the series peak. Experiment IDs are joined to `/projects/{key}/experiments` for name, project and flag, so experiments can be mapped to owning teams.
+
+**eMAU** behaves like cMAU: allocate `entity_eMAU / org_eMAU` by application or project, with the same caveat that a context seen in several entities is counted in each (rows can exceed the org total). It measures the pool *eligible* for experiments, not usage. The counted context kind can change during the current month (`primaryContextKindByTimestamp`), and account-level eMAU overrides set by LD are not visible via the API.
+
+**Bundled** contracts have no experimentation line to charge back. The tool offers a showback view using keys as the driver, and optionally spreads an internal "experimentation value" by keys share. This is never an invoice figure.
+
+Known data caveats: keys figures changed when LD moved the meter off Amberflo (Sep 2025, anonymous-user mode dropped); the keys `projectKey` *filter* returned account-wide data until a Sep 2026 fix, so the tool groups rather than filters.
+
+---
+
 ### Service Connections
 
 Service connections count persistent SDK connections to LaunchDarkly's streaming infrastructure, primarily from **server-side SDKs**.
@@ -179,6 +201,9 @@ Authorization: <your-api-token>
 | Enumerate context kinds | `/projects/{projectKey}/context-kinds` | union across projects |
 | Service connections (org + per app/project) | `/usage/service-connections`, `/usage/streams/{browser,mobile}` | `groupBy=sdkAppId` / `projectId`; per-app requires Relay v8.17.8+ and SDKs sending `application.id` |
 | MAU by SDK type | `/usage/mau/sdks` | client vs server balance |
+| Experimentation keys (org + per project / experiment) | `/usage/experimentation-keys` | `groupBy=projectId,experimentId`; additive; MTD cumulative → peak; no `sdkAppId` |
+| Experimentation MAU (eMAU) | `/usage/total-mau` | same shape/groupBy as `clientside-mau`; not tied to experiment participation |
+| Experiment names / flags | `/projects/{projectKey}/experiments` | maps usage `experimentId` (= experiment `_id`) to key, name, flag |
 | Do **not** use for new work | `/usage/mau` | deprecated; lowercase `groupby`; rejects `sdkAppId` on some accounts |
 
 All usage endpoints require `LD-API-Version: beta`.
@@ -259,8 +284,12 @@ The same data drives capacity planning. Track the following monthly:
 | Service connections peak | `/api/v2/usage/streams/server` | Scaling headroom |
 | Evaluation volume per project | `/api/v2/usage/evaluations/...` | SDK load, flag sprawl |
 | MAU by SDK type | `/api/v2/usage/mau/sdks` | Client vs. server balance |
+| Experimentation keys per project | `/api/v2/usage/experimentation-keys` (`groupBy=projectId`) | Headroom vs a contracted keys cap (e.g. 580K) |
+| eMAU per application / project | `/api/v2/usage/total-mau` | Headroom vs a contracted eMAU add-on |
 
-**Thresholds to define:** Set internal alerts at 70% and 90% of your contracted cMAU limit. At 70%, notify the owning team. At 90%, escalate to platform ownership to negotiate overage terms or trigger a limit review.
+**Experimentation capacity** follows the contract's model (see Experimentation above). On **keys**, compare the month-to-date org total against the contracted keys cap; keys are additive, so the per-project contributors sum to the total, but there is no per-application breakdown. On **eMAU**, compare against the eMAU add-on; contributors overlap like cMAU. On the **FY27 FM+E bundle** or Guardian there is no cap, so track keys for trend only, with no utilization or breach projection.
+
+**Thresholds to define:** Set internal alerts at 70% and 90% of your contracted cMAU limit (and of the experimentation cap, where one exists). At 70%, notify the owning team. At 90%, escalate to platform ownership to negotiate overage terms or trigger a limit review.
 
 **Projection model:** Use a rolling 3-month average growth rate per application to project when a team will hit its allocated cMAU budget. This gives teams 60-90 days notice to either optimize (reduce unique context churn, implement anonymous user strategies) or request additional allocation.
 
