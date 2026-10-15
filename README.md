@@ -11,7 +11,7 @@ A browser-based dashboard — **plus a headless export script** — for LaunchDa
 A friendlier lens on LaunchDarkly usage than the built-in billing UI, aimed at internal cost allocation:
 
 - **Chargeback** — cMAU billing by application or project (primary-context, reconciles to the invoice), plus a de-duplicated **largest-context-kind** proportional allocation.
-- **Capacity** — growth over time, a rolling-3-month **run-rate projection** (with projected breach month), and a contributor breakdown vs your contracted cMAU / connection limits.
+- **Capacity** — growth over time, a rolling-3-month **run-rate projection** (with projected breach month), and a contributor breakdown vs your contracted cMAU / connection / experimentation limits.
 - **Break down by application and project** — see who's driving each billable dimension.
 - **Pick a billing month** (this/last month, a recent month, or a custom range); chargeback snapshots the last day of the month.
 - **Export anything** — every chart and table has an Export CSV button, or run the script for the full set without the UI.
@@ -127,8 +127,10 @@ node ld-export.mjs --out=/tmp/ld --months=6   # custom output dir + trailing-mon
 | `gap-by-environment.csv` | Env total vs attributed vs unattributed cMAU | `/usage/clientside-mau` (`projectId,environmentId[,sdkAppId]`) |
 | `largest-kind-by-app.csv`, `largest-kind-by-project.csv` | Each entity's largest context kind + proportional share | `/usage/clientside-contexts` (per-kind loop) + `/projects/{key}/context-kinds` |
 | `connections-by-app.csv`, `connections-by-project.csv` | Peak service connections + share | `/usage/service-connections` (`groupBy=sdkAppId`/`projectId`) |
-| `capacity-growth.csv` | Trailing-N-month cMAU (by app) + connections (by app/project) | monthly loop of the above |
+| `capacity-growth.csv` | Trailing-N-month cMAU (by app) + connections (by app/project) + experimentation keys (by project) + eMAU (by app/project) | monthly loop of the above |
 | `mau-by-sdk.csv` | MAU by SDK type/series | `/usage/mau/sdks` |
+| `exp-keys-by-project.csv`, `exp-keys-by-experiment.csv` | Experimentation keys + share (experiment rows include name, project, flag) | `/usage/experimentation-keys` (`groupBy=projectId,experimentId`) + `/projects/{key}/experiments` |
+| `exp-emau-by-app.csv`, `exp-emau-by-project.csv` | Experimentation MAU (eMAU) + share of org | `/usage/total-mau` (`groupBy=sdkAppId` / `projectId,environmentId`) |
 | `summary.json` | All of the above + the org cMAU snapshot, context-kind list, and run-rate projection | — |
 
 The script mirrors the data layer in `app.js`; see `chargebackspec.md` for the endpoint rationale and **limitations** (billed cMAU is primary-context-kind only; largest-kind is context-key usage, a different metric; per-app/project figures overlap and don't de-duplicate; `/usage/mau` is deprecated and rejects `sdkAppId`).
@@ -144,8 +146,11 @@ The peak number of concurrent connections from your SDKs to LaunchDarkly. This i
 - **Browser** - Client-side JavaScript SDK connections
 - **Mobile** - Mobile SDK (iOS/Android) connections
 
-### Experimentation Keys
-The number of unique experimentation metric keys used in your experiments during the period.
+### Experimentation
+Pick the model the contract bills on in the Experimentation panel:
+- **Experimentation keys** — unique contexts *per experiment* (a context in two experiments counts twice), month-to-date from `/usage/experimentation-keys`. Allocated by project or by experiment (with experiment name and flag); keys are additive, so rows reconcile to the org total. Not available per application.
+- **Experimentation MAU (eMAU)** — the account-wide pool of the most-used context kind across client and non-anonymous server SDKs, from `/usage/total-mau`, whether or not contexts were in an experiment. Allocated by application or project like cMAU (same overlap caveat).
+- **Bundled (FM+E)** — FY27 packaging and Guardian include experimentation, so there is no experimentation invoice line. Showback only, using keys as the driver, with an optional internal value to spread.
 
 ### Chargeback allocation (two models)
 - **Billing (primary context)** — each application's or project's billed cMAU as a share of the org total. Reconciles to the invoice; duplication across context kinds is inherent and stays.
@@ -154,7 +159,7 @@ The number of unique experimentation metric keys used in your experiments during
 An **unattributed-cMAU gap report** (per environment) shows how much usage isn't tied to an `application.id`.
 
 ### Capacity
-Growth of billed cMAU / peak connections over the trailing 12 months, a rolling-3-month run-rate projection (with the projected month you'd cross a contracted limit), and a contributor breakdown by application or project. Set contracted limits in **Configuration** to see utilization and 70% / 90% threshold lines.
+Growth of billed cMAU / peak connections / experimentation (keys or eMAU, following the Experimentation model) over the trailing 12 months, a rolling-3-month run-rate projection (with the projected month you'd cross a contracted limit), and a contributor breakdown by application or project. Set contracted limits in **Configuration** to see utilization and 70% / 90% threshold lines.
 
 See [`chargebackspec.md`](chargebackspec.md) for the full allocation model, endpoint rationale, and limitations.
 
@@ -164,7 +169,7 @@ See [`chargebackspec.md`](chargebackspec.md) for the full allocation model, endp
 Quick overview of:
 - Total Client MAU for the period
 - Peak Service Connections
-- Experimentation Keys used
+- Experimentation keys or eMAU (depending on the selected billing model)
 - Number of active projects
 
 ### Time Series Charts

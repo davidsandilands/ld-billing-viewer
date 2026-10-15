@@ -160,6 +160,31 @@ function grouped(from, to, groupBy, extra = {}) {
 function contexts(from, to, groupBy, contextKind) {
     return apiSafe('/usage/clientside-contexts', { from, to, aggregationType: 'month_to_date', groupBy, contextKind });
 }
+function totalMau(from, to, groupBy) {
+    // /usage/total-mau is LD's Experimentation MAU (eMAU) meter — same shape as clientside-mau.
+    return apiSafe('/usage/total-mau', { from, to, aggregationType: 'month_to_date', groupBy });
+}
+function experimentationKeys(from, to, groupBy) {
+    // Unique contexts per experiment (additive). groupBy: projectId | environmentId | experimentId.
+    return apiSafe('/usage/experimentation-keys', { from, to, aggregationType: 'month_to_date', groupBy });
+}
+/** experiment _id → { key, name, projectKey, flagKey } across all projects (beta Experiments API). */
+async function fetchExperimentCatalog(projects) {
+    const catalog = new Map();
+    await Promise.all(projects.map(async p => {
+        for (let offset = 0, page = 0; page < 40; page++, offset += 50) {
+            const r = await apiSafe(`/projects/${encodeURIComponent(p.key)}/experiments`, { limit: 50, offset, expand: 'currentIteration' });
+            const items = r?.items || [];
+            for (const e of items) {
+                const id = e._id || e.id;
+                if (id) catalog.set(String(id), { key: e.key || String(id), name: e.name || e.key || String(id), projectKey: p.key,
+                    flagKey: Object.keys(e.currentIteration?.flags || {})[0] || '' });
+            }
+            if (items.length < 50) break;
+        }
+    }));
+    return catalog;
+}
 function connections(from, to, groupBy) {
     return apiSafe('/usage/service-connections', { from, to, groupBy });
 }
@@ -350,6 +375,55 @@ async function main() {
     })(sdksRaw, '');
     await writeCsv('mau-by-sdk.csv', ['seriesPath', 'value'], sdkRows);
 
+    // 5b. Experimentation — keys by project + experiment, eMAU by app + project. Which one is the
+    // invoice line depends on the contract (keys, eMAU, or FY27 bundled = no experimentation line).
+    console.log('Fetching experimentation (keys + eMAU)…');
+    const [expTotalRaw, expProjExpRaw, emauTotalRaw, emauAppRaw, emauEnvRaw, expCatalog] = await Promise.all([
+        experimentationKeys(from, to),
+        experimentationKeys(from, to, ['projectId', 'experimentId']),
+        totalMau(from, to),
+        totalMau(from, to, ['sdkAppId']),
+        totalMau(from, to, ['projectId', 'environmentId']),
+        fetchExperimentCatalog(projects)
+    ]);
+    // Keys series is MTD cumulative → peak = month-to-date value.
+    const keysOrg = Math.max(0, ...groupedToColumns(expTotalRaw).map(c => peak(c.series)));
+    const keysByProj = new Map(), keysByExp = new Map();
+    for (const c of groupedToColumns(expProjExpRaw)) {
+        const v = peak(c.series);
+        if (!(v > 0)) continue;
+        const expId = c.meta?.experimentId != null ? String(c.meta.experimentId) : 'unknown';
+        const info = expCatalog.get(expId);
+        let pk = resolveProj(c.meta);
+        if (pk === 'unknown' && info?.projectKey) pk = info.projectKey;
+        keysByProj.set(pk, (keysByProj.get(pk) || 0) + v);
+        const row = keysByExp.get(expId) || { expId, key: info?.key || expId, name: info?.name || expId, projectKey: pk, flagKey: info?.flagKey || '', value: 0 };
+        row.value += v;
+        keysByExp.set(expId, row);
+    }
+    const expKeysByProject = shareRows(keysByProj, keysOrg, nameProj);
+    const keysDenom = keysOrg || [...keysByExp.values()].reduce((t, r) => t + r.value, 0);
+    const expKeysByExperiment = [...keysByExp.values()]
+        .map(r => ({ ...r, sharePct: keysDenom > 0 ? (r.value / keysDenom) * 100 : 0 }))
+        .sort((a, b) => b.value - a.value);
+    await writeCsv('exp-keys-by-project.csv',
+        ['projectKey', 'name', 'experimentationKeys', 'sharePercent'],
+        expKeysByProject.map(r => [r.key, r.name, Math.round(r.value), r.sharePct.toFixed(4)]));
+    await writeCsv('exp-keys-by-experiment.csv',
+        ['experimentKey', 'name', 'projectKey', 'flagKey', 'experimentationKeys', 'sharePercent'],
+        expKeysByExperiment.map(r => [r.key, r.name, r.projectKey, r.flagKey, Math.round(r.value), r.sharePct.toFixed(4)]));
+    const orgEmau = seriesTotal(emauTotalRaw);
+    const emauByApp = shareRows(perEntityValue(emauAppRaw, resolveApp, 'snapshot'), orgEmau, nameApp);
+    const emauByProject = shareRows(perEntityValue(emauEnvRaw, resolveProj, 'snapshot'), orgEmau, nameProj);
+    await writeCsv('exp-emau-by-app.csv',
+        ['applicationKey', 'name', 'emau', 'sharePercentOrg'],
+        emauByApp.map(r => [r.key, r.name, Math.round(r.value), r.sharePct.toFixed(4)]));
+    await writeCsv('exp-emau-by-project.csv',
+        ['projectKey', 'name', 'emau', 'sharePercentOrg'],
+        emauByProject.map(r => [r.key, r.name, Math.round(r.value), r.sharePct.toFixed(4)]));
+    const emauKinds = emauTotalRaw?.primaryContextKindByTimestamp || {};
+    const emauKindTs = Object.keys(emauKinds).sort((a, b) => Number(a) - Number(b)).at(-1);
+
     // 6. Capacity growth (trailing months) — cMAU by app + connections by app/project, month-end/peak
     console.log(`Fetching ${MONTH_COUNT}-month capacity growth series…`);
     const monthKeys = trailingMonthKeys(MONTH_COUNT);
@@ -357,16 +431,23 @@ async function main() {
     const orgCmauByMonth = {};
     for (const mk of monthKeys) {
         const { from: mf, to: mt } = monthToRange(mk);
-        const [cmA, cnA, cnP] = await Promise.all([
+        const [cmA, cnA, cnP, xkP, emA, emPE] = await Promise.all([
             grouped(mf, mt, ['sdkAppId']),
             connections(mf, mt, 'sdkAppId'),
-            connections(mf, mt, 'projectId')
+            connections(mf, mt, 'projectId'),
+            experimentationKeys(mf, mt, ['projectId']),
+            totalMau(mf, mt, ['sdkAppId']),
+            totalMau(mf, mt, ['projectId', 'environmentId'])
         ]);
         const cmauMap = perEntityValue(cmA, resolveApp, 'snapshot');
         orgCmauByMonth[mk] = [...cmauMap.values()].reduce((s, v) => s + v, 0);
         for (const [k, v] of cmauMap) growth.push(['cmau', 'application', nameApp(k), mk, Math.round(v)]);
         for (const [k, v] of perEntityValue(cnA, resolveApp, 'peak')) growth.push(['connections', 'application', nameApp(k), mk, Math.round(v)]);
         for (const [k, v] of perEntityValue(cnP, resolveProj, 'peak')) growth.push(['connections', 'project', nameProj(k), mk, Math.round(v)]);
+        // Experimentation: keys (project only — no sdkAppId grouping; MTD cumulative → peak) and eMAU.
+        for (const [k, v] of perEntityValue(xkP, resolveProj, 'peak')) growth.push(['experimentation_keys', 'project', nameProj(k), mk, Math.round(v)]);
+        for (const [k, v] of perEntityValue(emA, resolveApp, 'snapshot')) growth.push(['emau', 'application', nameApp(k), mk, Math.round(v)]);
+        for (const [k, v] of perEntityValue(emPE, resolveProj, 'snapshot')) growth.push(['emau', 'project', nameProj(k), mk, Math.round(v)]);
     }
     await writeCsv('capacity-growth.csv', ['metric', 'dimension', 'entity', 'month', 'value'], growth);
 
@@ -389,6 +470,16 @@ async function main() {
         largestKindByProject: lkProj,
         connectionsByApp: connByApp,
         connectionsByProject: connByProj,
+        experimentation: {
+            note: 'Billed meter depends on the contract: keys, eMAU, or bundled (FY27 FM+E — no experimentation invoice line).',
+            keysOrgTotal: Math.round(keysOrg),
+            keysByProject: expKeysByProject,
+            keysByExperiment: expKeysByExperiment,
+            emauOrgTotal: Math.round(orgEmau),
+            emauPrimaryContextKind: emauKindTs ? emauKinds[emauKindTs] : null,
+            emauByApp,
+            emauByProject,
+        },
         capacityGrowth: { months: monthKeys, orgCmauByMonth, projection: proj },
     };
     await writeFile(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 2));

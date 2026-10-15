@@ -878,6 +878,13 @@ select {
     color: var(--bg-primary);
     background: var(--accent-primary);
 }
+.cap-group-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.cap-group-btn:disabled:hover {
+    color: var(--text-secondary);
+}
 
 /* Capacity card: side-by-side stat layout when both dimensions are configured */
 .capacity-split {
